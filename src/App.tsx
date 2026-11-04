@@ -1,0 +1,198 @@
+import { useEffect, useState } from 'react';
+import type { Session as AuthSession } from '@supabase/supabase-js';
+import Layout, { type TabKey } from './components/Layout';
+import Login from './components/Login';
+import { ErrorBanner, Spinner } from './components/ui';
+import { supabase } from './lib/supabase';
+import {
+  ensureSession,
+  ensureStore,
+  getStoreName,
+  type FxSession,
+} from './lib/db';
+import { errorMessage, todayIso } from './lib/format';
+import DashboardView from './views/DashboardView';
+import OpeningView from './views/OpeningView';
+import ImportView from './views/ImportView';
+import OperationsView from './views/OperationsView';
+import AccountsView from './views/AccountsView';
+import CashCountView from './views/CashCountView';
+import CloseView from './views/CloseView';
+import HistoryView from './views/HistoryView';
+import SettingsView from './views/SettingsView';
+
+export default function App() {
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [storeId, setStoreId] = useState<string | null>(null);
+  const [storeName, setStoreName] = useState('Caja Temuco');
+  const [businessDate, setBusinessDate] = useState(todayIso());
+  const [fxSession, setFxSession] = useState<FxSession | null>(null);
+  const [active, setActive] = useState<TabKey>('dashboard');
+  const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setAuthSession(data.session);
+        setAuthReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthReady(true);
+      });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+    });
+
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authSession) {
+      setStoreId(null);
+      setFxSession(null);
+      setBooting(false);
+      return;
+    }
+
+    let cancelled = false;
+    setBooting(true);
+    setBootError(null);
+
+    ensureStore()
+      .then(async (id) => {
+        if (cancelled) return;
+        setStoreId(id);
+        const name = await getStoreName(id);
+        if (!cancelled) setStoreName(name);
+      })
+      .catch((caught) => {
+        if (!cancelled) setBootError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (!cancelled) setBooting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!storeId) return;
+    let cancelled = false;
+    setBootError(null);
+
+    ensureSession(storeId, businessDate)
+      .then((session) => {
+        if (!cancelled) setFxSession(session);
+      })
+      .catch((caught) => {
+        if (!cancelled) setBootError(errorMessage(caught));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storeId, businessDate]);
+
+  function refresh() {
+    if (storeId) {
+      ensureSession(storeId, businessDate)
+        .then((session) => setFxSession(session))
+        .catch(() => undefined);
+    }
+  }
+
+  if (!authReady) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-slate-950">
+        <Spinner label="Verificando sesión…" />
+      </main>
+    );
+  }
+
+  if (!authSession) return <Login />;
+
+  if (booting || !storeId || !fxSession) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-slate-950 px-4">
+        {bootError ? (
+          <div className="w-full max-w-lg space-y-3">
+            <ErrorBanner message={bootError} />
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : (
+          <Spinner label="Preparando la jornada…" />
+        )}
+      </main>
+    );
+  }
+
+  function renderView() {
+    if (!storeId || !fxSession) return null;
+
+    switch (active) {
+      case 'opening':
+        return (
+          <OpeningView
+            storeId={storeId}
+            session={fxSession}
+            businessDate={businessDate}
+            onSaved={refresh}
+          />
+        );
+      case 'import':
+        return <ImportView storeId={storeId} session={fxSession} onImported={refresh} />;
+      case 'operations':
+        return <OperationsView storeId={storeId} session={fxSession} onChanged={refresh} />;
+      case 'accounts':
+        return <AccountsView storeId={storeId} session={fxSession} onChanged={refresh} />;
+      case 'cashcount':
+        return <CashCountView storeId={storeId} session={fxSession} onSaved={refresh} />;
+      case 'close':
+        return <CloseView storeId={storeId} session={fxSession} onClosed={refresh} />;
+      case 'history':
+        return <HistoryView storeId={storeId} />;
+      case 'settings':
+        return <SettingsView storeId={storeId} />;
+      default:
+        return (
+          <DashboardView storeId={storeId} session={fxSession} onNavigate={setActive} />
+        );
+    }
+  }
+
+  return (
+    <Layout
+      active={active}
+      onChange={setActive}
+      businessDate={businessDate}
+      onDateChange={setBusinessDate}
+      storeName={storeName}
+      userEmail={authSession.user.email ?? ''}
+    >
+      {fxSession.status !== 'OPEN' && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          La jornada está {fxSession.status.toLowerCase()}. Puedes consultar el cierre,
+          pero no registrar nuevas operaciones.
+        </div>
+      )}
+      <div>{renderView()}</div>
+    </Layout>
+  );
+}

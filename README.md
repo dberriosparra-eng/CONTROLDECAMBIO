@@ -1,0 +1,125 @@
+# Control de Cambio · Caja Temuco
+
+Panel interno para la gestión diaria de una casa de cambio: apertura, importación del reporte, operaciones, cuentas corrientes, cuadratura, cierre y valorización FIFO.
+
+> Proyecto independiente. No comparte código, base de datos ni configuración con NEXO.
+
+## Stack
+
+- **Frontend:** Vite + React 19 + TypeScript + Tailwind CSS 4.
+- **Persistencia:** Supabase (PostgreSQL + Auth + RLS).
+- **Excel:** SheetJS (`xlsx`) para leer el reporte diario.
+- **Dominio:** `src/lib/domain/fx.ts` (funciones puras, sin dependencias de UI).
+- **Pruebas:** Node test runner (`npm test`).
+
+## Requisitos
+
+- Node 22 o superior.
+- Un proyecto Supabase.
+- Variables de entorno en `.env.local`:
+
+```bash
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
+```
+
+`.env.local` está en `.gitignore`. No subir claves ni cadenas de conexión.
+
+## Desarrollo
+
+```bash
+npm install
+npm run dev
+```
+
+Abre la URL que muestra Vite (por defecto `http://localhost:5173`).
+
+## Base de datos
+
+Las migraciones están en:
+
+```text
+supabase/migrations/202611040002_fx_casa_cambio.sql
+supabase/migrations/202611040003_fx_rpc.sql
+```
+
+Aplícalas **en ese orden**. La primera crea tablas, vistas y RLS; la segunda crea las funciones transaccionales.
+
+Incluye:
+
+- Monedas, alias y denominaciones.
+- Sesiones y apertura.
+- Documentos y operaciones.
+- Boletas ST.
+- Lotes y consumos FIFO.
+- Movimientos de inventario.
+- Cuentas corrientes.
+- Conteo físico, cierre y gastos.
+- Vistas de cálculo y RLS.
+
+### Aplicar la migración
+
+Con Supabase CLI:
+
+```bash
+npx supabase link --project-ref <project-ref>
+npx supabase db push
+```
+
+`db push` pide la contraseña de la base de datos. También se puede pegar el SQL en el SQL Editor del panel de Supabase.
+
+> La cadena `postgresql://postgres:[YOUR-PASSWORD]@...` requiere reemplazar `[YOUR-PASSWORD]` por la contraseña real. No guardar esa cadena en el repositorio.
+
+### Primer usuario
+
+1. Crear un usuario en Supabase Auth (email/password).
+2. Iniciar sesión en la app.
+3. La app crea automáticamente una tienda y una membresía para el usuario si no existe.
+
+## Estructura
+
+```text
+src/
+  components/        Layout, login y UI reutilizable
+  views/             Apertura, importación, operaciones, cuentas, cuadratura, cierre, histórico
+  lib/
+    supabase.ts      Cliente Supabase
+    db.ts            Consultas y RPC
+    excel.ts         Lectura y normalización del reporte
+    domain/fx.ts     Reglas puras: FIFO, ST, estadísticas, cuentas, cuadratura
+supabase/migrations/ Migración de referencia
+docs/                Análisis de los Excel y diseño funcional
+tests/               Pruebas del dominio
+```
+
+## Flujo operativo
+
+1. **Apertura:** elegir fecha, cargar saldos iniciales por divisa y costo unitario. Se crean las capas FIFO de apertura.
+2. **Importar reporte:** subir `.xlsx`, revisar la vista previa, ingresar folios ST y confirmar. Las boletas ST quedan registradas pero no suman.
+3. **Operaciones:** revisar compras/ventas, marcar mayoristas, anular o reversar ST.
+4. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa.
+5. **Cuadratura:** contar billetes/monedas por denominación y comparar contra el saldo esperado.
+6. **Cierre:** generar el reporte jerárquico y la valorización FIFO del inventario.
+7. **Histórico:** consultar promedios mensuales de compra/venta y volúmenes.
+
+## Documentación funcional
+
+- `docs/CAJA-TEMUCO-ANALISIS-DISENO.md`: lectura de `Reporte.xlsx` y `CAJA TEMUCO V5.xlsx`, hallazgos, modelo de datos, reglas contables, UI y plan de implementación.
+
+## Estado
+
+- [x] Análisis de los Excel.
+- [x] Esquema SQL de referencia.
+- [x] Núcleo de dominio FIFO/ST/cuentas/cuadratura.
+- [x] RPC transaccionales de apertura, importación, cuentas, conteo y cierre.
+- [x] Vistas de la interfaz conectadas a Supabase.
+- [x] Importación de `Reporte.xlsx` con vista previa y exclusión ST.
+- [ ] Migración del histórico completo de los Excel.
+- [ ] Reglas finas de `DEUDAS TCO` (pendiente de validar con el negocio).
+- [ ] Adjuntos/exportación PDF del cierre (hoy usa impresión del navegador).
+
+## Seguridad
+
+- La `publishable key` es pública; la protección real la entrega RLS.
+- Nunca usar `service_role` en el frontend.
+- No commitear `.env.local`.
