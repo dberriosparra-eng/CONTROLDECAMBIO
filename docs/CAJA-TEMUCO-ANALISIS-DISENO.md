@@ -10,18 +10,18 @@
 
 ### Recomendación
 
-Implementar el módulo como **“Divisas” dentro del ERP Nexo existente**, usando **Next.js 16 + React 19 + Supabase/PostgreSQL**, y no como una app Streamlit separada.
+Implementar un **proyecto independiente** con **Vite + React 19 + TypeScript + Supabase/PostgreSQL**, separado de NEXO.
 
 Motivos:
 
-1. El repositorio ya tiene autenticación, multi-tienda, RLS, layout, componentes de tabla/modal/alertas y despliegue.
-2. La operación requiere **transacciones atómicas** (FIFO + inventario + cuentas corrientes + cierre). PostgreSQL lo resuelve de forma natural; un script local en Excel/Streamlit tendería a duplicar estado y a perder auditabilidad.
-3. La casa de cambio necesita **histórico, trazabilidad por folio, roles y respaldo**. Supabase ya provee esa base.
-4. Streamlit sigue siendo una buena alternativa para un prototipo de análisis, pero no para el sistema diario si ya existe el ERP.
+1. El alcance es una casa de cambio, no un ERP de tiendas; mezclarlo con NEXO agrega dependencias y riesgo.
+2. La operación requiere **transacciones atómicas** (FIFO + inventario + cuentas corrientes + cierres mayoristas + cierre diario). PostgreSQL lo resuelve de forma natural.
+3. La casa de cambio necesita **histórico, trazabilidad por folio, roles y respaldo**. Supabase provee esa base.
+4. Un panel interno en React permite formularios densos, tablas, importación de Excel y reportes imprimibles sin arrastrar el modelo de datos de NEXO.
 
 ### Hallazgo principal
 
-Los Excel actuales **no implementan FIFO**. `MES` valoriza el inventario con **promedio ponderado diario** (`SUMA(CLP) / SUMA(divisa)`), y `DEUDAS TCO` es un **libro de cuentas corrientes por divisa**, no un libro de lotes FIFO. Por lo tanto, el FIFO debe construirse como un libro nuevo de capas (`fx_lots`) y consumos (`fx_lot_consumptions`), usando las compras históricas como fuente para sembrar las capas iniciales.
+Los Excel actuales **no implementan FIFO**. `MES` valoriza el inventario con **promedio ponderado diario** (`SUMA(CLP) / SUMA(divisa)`). `DEUDAS TCO` queda **fuera de alcance** por decisión del negocio. Por lo tanto, el FIFO debe construirse como un libro nuevo de capas (`fx_lots`) y consumos (`fx_lot_consumptions`), usando las compras históricas como fuente para sembrar las capas iniciales.
 
 ### Entregables incluidos
 
@@ -33,6 +33,18 @@ Los Excel actuales **no implementan FIFO**. `MES` valoriza el inventario con **p
 La migración queda preparada pero **no aplicada** al Supabase remoto, igual que las migraciones de referencia del repositorio.
 
 ---
+
+## 1.b Aclaraciones del negocio (alcance definitivo)
+
+Estas definiciones reemplazan cualquier supuesto anterior del documento:
+
+- **ST = boleta nula.** Se registra solo para auditoría y **no se considera para nada**: no suma compras, ventas, CLP, promedios, margen, inventario ni cuentas.
+- **`DEUDAS TCO` no se considera.** Queda fuera del alcance y de la migración. No se usa como fuente FIFO ni como cuenta corriente.
+- **No hay una “fecha de corte” fija.** Los reportes deben permitir **semana, mes, año y rango personalizado**. El histórico se consulta por período.
+- **`ARGENTINO T` = peso argentino por transferencia.** Se modela como `ARS` con `instrument = TRANSFERENCIA`, separado del peso argentino efectivo para conservar sus promedios.
+- **Mayoristas:** se pacta por teléfono una divisa a un precio fijo con un proveedor/cliente. Luego se hacen depósitos o pagos en efectivo para cuadrar, por lo que pueden quedar **saldos pendientes de ambas partes**. Se modela con `fx_wholesale_deals` (cabecera pactada) y `fx_wholesale_settlements` (entregas de divisa y pagos/cobros CLP).
+- **Cuentas bancarias:** se tratan como contrapartes de tipo **`BANCO`** dentro de cuentas corrientes. No se crea un módulo bancario separado.
+- **Gastos:** debe existir un **cuadro de gastos** por categoría y por período, además del detalle diario. Cada gasto descuenta caja CLP y resultado.
 
 ## 2. Lectura de los archivos
 
@@ -65,7 +77,7 @@ Observaciones:
 
 | Hoja | Filas × columnas | Uso observado |
 |---|---:|---|
-| `DEUDAS TCO` | 200 × 69 | Cuenta corriente por divisa con un tercero (“TCO”): fecha, monto, precio, modo |
+| `DEUDAS TCO` | 200 × 69 | **Fuera de alcance** por decisión del negocio; no se migra ni se usa |
 | `MES` | 3.756 × 130 | Libro diario ancho: 18 pares compra/venta por moneda, resumen de capital y utilidad |
 | `LIBRO DIARIO` | 378 × 10 | Encabezado `Fecha/Nombre/Monto/Moneda/Concepto`; **sin datos** en la muestra |
 | `AD` | 4 × 3 | Tabla dinámica vacía |
@@ -92,12 +104,9 @@ Observaciones:
 
 #### Hoja `DEUDAS TCO`
 
-- 14 bloques de divisa: USD, ARS, BLR (probablemente BRL), EUR, AUD, CAD, COP, GBP, MXN, PYG, UYU, NZD, CHF, PEN.
-- Cada bloque: `Fecha`, `Monto`, `Precio`, `Modo`.
-- 61 filas no vacías.
-- Valores de `Modo`: `finde`, `depo`, `depos`, `se llevo`.
-- No hay signo, saldo acumulado, contraparte formal ni vínculo con una operación.
-- **Interpretación:** es un libro de movimientos de deuda/cuenta corriente con “TCO”, no un libro de lotes FIFO. “finde” probablemente sea un préstamo de fin de semana; “depo” un depósito/entrega; “se llevo” un retiro. Estas semánticas deben confirmarse con el negocio antes de migrar.
+- La hoja existe, pero **queda fuera de alcance** por decisión del negocio.
+- No se migra, no se usa como fuente FIFO y no se muestra en la app.
+- `finde` = fin de semana; `depo` = depósito. No se necesita interpretar el resto para este proyecto.
 
 #### Hoja `CUADRATURA`
 
@@ -131,7 +140,7 @@ Conclusión: la planilla actual **no contiene un histórico completo ni un FIFO 
 | 4 | Sin timestamps | FIFO ambiguo dentro del día | Orden: `business_date`, `folio`, `line_no`, `import_sequence`. |
 | 5 | Sin columna ST | No se puede excluir con certeza | Tabla `fx_st_folios` + estado `VOID_ST` en el documento. Exclusión obligatoria en vistas y funciones. |
 | 6 | `MES` usa promedio ponderado | El “costo” actual no es FIFO | Libro de lotes `fx_lots` y consumos `fx_lot_consumptions`. El promedio queda solo como estadística. |
-| 7 | `DEUDAS TCO` no tiene saldo ni vínculo | No se puede reconstruir automáticamente | Migrar como movimientos de cuenta corriente, con mapeo de `Modo` validado por el negocio. |
+| 7 | `DEUDAS TCO` no tiene saldo ni vínculo | No se puede reconstruir automáticamente | **Fuera de alcance**: no se migra ni se usa. |
 | 8 | `LIBRO DIARIO` vacío | `ENCAJES` no tiene fuente | Modelar `fx_other_assets` o `fx_inventory_movements` con tipo `ENCAJE`; no depender de una hoja vacía. |
 | 9 | CLP se mezcla con capital | Diferencia de cuadratura mal interpretada | Separar `caja CLP` de `capital total`; el capital incluye inventario FIFO valorizado. |
 | 10 | Inventario puede quedar negativo | FIFO sin capa suficiente | Bloquear la operación y exigir apertura/ajuste; en migración, permitir `allow_short` solo con auditoría. |
@@ -184,7 +193,7 @@ Reglas:
 - El **capital total** es `caja CLP + valorización FIFO de todas las divisas + encajes`.
 - El **resultado del día** es `margen realizado + diferencias FX de cuentas + otros ingresos − gastos`.
 
-### 4.3 Boletas ST (anuladas sin nota de crédito)
+### 4.3 Boletas nulas (ST)
 
 Modelo:
 
@@ -719,12 +728,14 @@ FIFO:
 
 ## 8. Plan de implementación
 
-### Fase 0 — Preparación (1–2 días)
+### Fase 0 — Preparación (resuelta)
 
-- Confirmar semántica de ST y de `DEUDAS TCO`.
-- Definir fecha de corte y saldos iniciales.
-- Definir si `ARGENTINO T` es instrumento separado.
-- Definir qué es “mayorista” y cómo se liquida.
+- ST = boleta nula, excluida por completo.
+- `DEUDAS TCO` fuera de alcance.
+- `ARGENTINO T` = ARS por transferencia.
+- Mayoristas = cierre pactado con entregas/pagos parciales.
+- Bancos = contrapartes `BANCO`.
+- Períodos = semana, mes, año y rango personalizado.
 
 ### Fase 1 — Esquema y dominio (3–5 días)
 
@@ -767,14 +778,9 @@ FIFO:
 2. Normalizar `Reporte.xlsx` y cargarlo en staging.
 3. Agrupar por folio/documento; marcar folios 0 y duplicados.
 4. Crear monedas/alias/denominaciones.
-5. Definir apertura en la fecha de corte:
-   - Si se migra todo el histórico, crear una capa inicial antes del primer movimiento con cantidad y costo explícitos.
-   - Si se parte desde una fecha, cargar el conteo físico de `CUADRATURA` como apertura y avanzar desde ahí.
+5. Definir el saldo inicial con el conteo físico de `CUADRATURA` o con una capa inicial explícita antes del primer movimiento.
 6. Importar compras/ventas en orden cronológico para que el FIFO tenga capas.
-7. Importar `DEUDAS TCO` como cuentas corrientes:
-   - Crear contraparte “TCO”.
-   - Mapear `Modo` a tipo de movimiento (requiere validación).
-   - Guardar `Precio` como `fx_rate` y calcular `clp_equivalent`.
+7. **No importar `DEUDAS TCO`** (fuera de alcance).
 8. Importar `GASTOS` si hay datos.
 9. Importar `CUADRATURA` como conteo inicial o de cierre.
 10. Reconciliar:
@@ -782,6 +788,7 @@ FIFO:
     - Diferencias contra `CUADRATURA`.
     - Capital total contra `A7`.
 11. Documentar las diferencias aceptadas y su motivo.
+12. Los reportes se consultan por semana, mes, año o rango personalizado.
 
 ---
 
@@ -807,27 +814,35 @@ FIFO:
 
 ## 11. Decisiones pendientes
 
-1. **ST**: ¿significa “sin timbre”, “sin transferencia” u otra causal? ¿Se aplica por folio completo o por línea?
-2. **DEUDAS TCO**: confirmar qué significan `finde`, `depo` y `se llevo`, y si el saldo es deudor o acreedor.
-3. **Fecha de corte** para la migración y saldo inicial definitivo.
-4. **ARGENTINO T**: ¿es peso argentino transferencial (misma moneda, distinto instrumento) o una moneda/operación separada?
-5. **Mayorista**: ¿se define por monto, por cliente, por ticket o por liquidación en cuenta corriente?
-6. **CLP**: ¿toda la caja CLP es efectivo, o parte está en banco/transferencia? Si hay banco, modelarlo como `fx_other_assets`.
-7. **Encajes**: qué activos incluye `ENCAJES` y cómo se valorizan.
-8. **Roles**: quién puede abrir/cerrar, anular, reversar ST y editar cuentas corrientes.
-9. **Diferencia de cuadratura**: ¿se ajusta contra resultado, contra capital o queda como pendiente?
-10. **Exportación**: ¿se necesita seguir generando el formato `CAJA TEMUCO V5.xlsx` o basta PDF/Excel del sistema?
+Las dudas de negocio originales quedaron resueltas:
+
+- **ST**: boleta nula; se excluye por completo y solo se conserva para auditoría.
+- **`DEUDAS TCO`**: fuera de alcance; no se migra ni se usa.
+- **Períodos**: semana, mes, año y rango personalizado; sin fecha de corte fija.
+- **`ARGENTINO T`**: ARS por transferencia, separado del efectivo.
+- **Mayoristas**: cierre pactado con entregas/pagos parciales y saldos por ambas partes.
+- **Bancos**: se modelan como contrapartes `BANCO` en cuentas corrientes.
+- **Gastos**: cuadro por categoría y período, con impacto en caja CLP.
+
+Quedan por definir, ya en la operación real:
+
+1. **Roles**: quién puede abrir/cerrar, anular, reversar nulas y editar cuentas corrientes.
+2. **Diferencia de cuadratura**: ¿se ajusta contra resultado, contra capital o queda como pendiente?
+3. **Encajes**: qué activos incluye `ENCAJES` y cómo se valorizan.
+4. **Exportación**: si se debe seguir generando el formato `CAJA TEMUCO V5.xlsx` o basta PDF/Excel del sistema.
+5. **Saldo inicial de la migración**: qué conteo físico se usará como punto de partida del histórico.
 
 ---
 
 ## 12. Conclusión
 
-La operación puede modelarse con un libro transaccional único y tres libros derivados:
+La operación se modela con un libro transaccional único y cuatro libros derivados:
 
-1. **Libro de operaciones** (compras/ventas, con ST excluidas).
+1. **Libro de operaciones** (compras/ventas, con nulas ST excluidas).
 2. **Libro FIFO** (lotes y consumos, para costo y valorización).
-3. **Libro de cuentas corrientes** (deudores/acreedores por divisa).
+3. **Libro de cuentas corrientes** (deudores/acreedores por divisa, incluidos bancos).
+4. **Libro de cierres mayoristas** (precio pactado, entregas y pagos parciales).
 
-La cuadratura y el cierre se calculan desde esos libros, no desde fórmulas de planilla. Esto elimina el riesgo de que una boleta ST “se cuele” en un total, permite auditar cada peso y deja el histórico mensual reproducible.
+La cuadratura y el cierre se calculan desde esos libros, no desde fórmulas de planilla. Esto elimina el riesgo de que una boleta nula “se cuele” en un total, permite auditar cada peso y deja el histórico por período reproducible.
 
-La implementación recomendada es el módulo “Divisas” dentro del ERP Nexo actual, con Supabase/PostgreSQL y la interfaz descrita. La migración SQL y el núcleo de dominio adjuntos son el punto de partida técnico.
+La implementación es un proyecto independiente de NEXO, con Vite + React + TypeScript + Supabase/PostgreSQL. La migración SQL y el núcleo de dominio adjuntos son el punto de partida técnico.

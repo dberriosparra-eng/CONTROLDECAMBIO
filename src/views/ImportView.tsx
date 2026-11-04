@@ -142,7 +142,7 @@ export default function ImportView({
       setSuccess(
         `Importación completa: ${result.documents ?? 0} documentos, ${
           result.operations ?? 0
-        } operaciones, ${result.void_operations ?? 0} líneas ST.`,
+        } operaciones, ${result.void_operations ?? 0} líneas nulas (ST).`,
       );
       setParsed(null);
       const [stRows, batchRows] = await Promise.all([
@@ -235,7 +235,7 @@ export default function ImportView({
                 <p className="font-semibold text-white">{build?.documents.length ?? 0}</p>
               </div>
               <div className="rounded-xl bg-white/[0.03] px-3 py-2">
-                <p className="text-[11px] uppercase tracking-wider text-slate-500">ST</p>
+                <p className="text-[11px] uppercase tracking-wider text-slate-500">Nulas</p>
                 <p className="font-semibold text-amber-300">{build?.voidDocuments ?? 0}</p>
               </div>
               <div className="rounded-xl bg-white/[0.03] px-3 py-2">
@@ -248,8 +248,8 @@ export default function ImportView({
 
         <Card>
           <SectionTitle
-            title="Folios ST"
-            subtitle="Una boleta ST queda registrada para auditoría y no suma en compras, ventas, CLP ni FIFO."
+            title="Boletas nulas (ST)"
+            subtitle="Una boleta nula queda registrada solo para auditoría y no suma en compras, ventas, CLP ni FIFO."
           />
           <textarea
             value={stInput}
@@ -389,7 +389,7 @@ export default function ImportView({
                     </td>
                     <td className="px-3 py-2">
                       <Badge tone={document.status === 'VALID' ? 'indigo' : 'amber'}>
-                        {document.status === 'VALID' ? 'Válida' : 'ST'}
+                        {document.status === 'VALID' ? 'Válida' : 'Nula (ST)'}
                       </Badge>
                     </td>
                   </tr>

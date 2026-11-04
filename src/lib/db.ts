@@ -120,6 +120,41 @@ export type DailyStatRow = {
   sell_count: number;
 };
 
+export type WholesaleDealRow = {
+  id: string;
+  store_id: string;
+  session_id: string;
+  counterparty_id: string;
+  counterparty_name?: string;
+  deal_type: 'COMPRA' | 'VENTA';
+  currency_code: string;
+  agreed_qty: number;
+  agreed_rate: number;
+  agreed_clp: number;
+  business_date: string;
+  status: 'ABIERTO' | 'PARCIAL' | 'CERRADO' | 'ANULADO';
+  notes: string | null;
+  created_at: string;
+  delivered_qty: number;
+  paid_clp: number;
+  pending_qty: number;
+  pending_clp: number;
+};
+
+export type WholesaleSettlementRow = {
+  id: string;
+  deal_id: string;
+  session_id: string;
+  settlement_type: 'ENTREGA_DIVISA' | 'PAGO_CLP' | 'AJUSTE';
+  currency_code: string;
+  amount: number;
+  fx_rate: number;
+  clp_amount: number;
+  business_date: string;
+  note: string | null;
+  created_at: string;
+};
+
 export type ExpenseRow = {
   id: string;
   business_date: string;
@@ -503,11 +538,111 @@ export async function getSessionMargin(sessionId: string): Promise<number> {
   return Number((data as { realized_margin_clp?: number } | null)?.realized_margin_clp ?? 0);
 }
 
+export async function listWholesaleDeals(storeId: string): Promise<WholesaleDealRow[]> {
+  const { data, error } = await supabase
+    .from('fx_wholesale_deals_status')
+    .select(
+      'id, store_id, session_id, counterparty_id, deal_type, currency_code, agreed_qty, agreed_rate, agreed_clp, business_date, status, notes, created_at, delivered_qty, paid_clp, pending_qty, pending_clp',
+    )
+    .eq('store_id', storeId)
+    .order('business_date', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as WholesaleDealRow[];
+  if (rows.length === 0) return rows;
+
+  const counterparties = await listCounterparties(storeId);
+  const names = new Map(counterparties.map((item) => [item.id, item.name]));
+  return rows.map((row) => ({
+    ...row,
+    counterparty_name: names.get(row.counterparty_id) ?? 'Sin nombre',
+  }));
+}
+
+export async function createWholesaleDeal(input: {
+  storeId: string;
+  sessionId: string;
+  counterpartyId: string;
+  dealType: 'COMPRA' | 'VENTA';
+  currencyCode: string;
+  agreedQty: number;
+  agreedRate: number;
+  businessDate: string;
+  notes: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('fx_register_wholesale_deal', {
+    p_store_id: input.storeId,
+    p_session_id: input.sessionId,
+    p_counterparty_id: input.counterpartyId,
+    p_deal_type: input.dealType,
+    p_currency_code: input.currencyCode,
+    p_agreed_qty: input.agreedQty,
+    p_agreed_rate: input.agreedRate,
+    p_business_date: input.businessDate,
+    p_notes: input.notes,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function registerWholesaleSettlement(input: {
+  storeId: string;
+  dealId: string;
+  sessionId: string;
+  settlementType: 'ENTREGA_DIVISA' | 'PAGO_CLP';
+  amount: number;
+  businessDate: string;
+  note: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('fx_register_wholesale_settlement', {
+    p_store_id: input.storeId,
+    p_deal_id: input.dealId,
+    p_session_id: input.sessionId,
+    p_settlement_type: input.settlementType,
+    p_amount: input.amount,
+    p_business_date: input.businessDate,
+    p_note: input.note,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function listWholesaleSettlements(
+  dealId: string,
+): Promise<WholesaleSettlementRow[]> {
+  const { data, error } = await supabase
+    .from('fx_wholesale_settlements')
+    .select(
+      'id, deal_id, session_id, settlement_type, currency_code, amount, fx_rate, clp_amount, business_date, note, created_at',
+    )
+    .eq('deal_id', dealId)
+    .order('business_date', { ascending: true })
+    .order('created_at', { ascending: true });
+  return unwrap(data as WholesaleSettlementRow[] | null, error);
+}
+
 export async function listExpenses(sessionId: string): Promise<ExpenseRow[]> {
   const { data, error } = await supabase
     .from('fx_expenses')
     .select('id, business_date, concept, category, amount_clp, note, created_at')
     .eq('session_id', sessionId)
+    .order('created_at', { ascending: false });
+  return unwrap(data as ExpenseRow[] | null, error);
+}
+
+export async function listExpensesRange(
+  storeId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<ExpenseRow[]> {
+  const { data, error } = await supabase
+    .from('fx_expenses')
+    .select('id, business_date, concept, category, amount_clp, note, created_at')
+    .eq('store_id', storeId)
+    .gte('business_date', fromDate)
+    .lte('business_date', toDate)
+    .order('business_date', { ascending: false })
     .order('created_at', { ascending: false });
   return unwrap(data as ExpenseRow[] | null, error);
 }

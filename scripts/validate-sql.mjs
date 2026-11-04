@@ -3,12 +3,6 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 
 const root = process.cwd();
-const migrations = [
-  'supabase/migrations/202611040002_fx_casa_cambio.sql',
-  'supabase/migrations/202611040003_fx_rpc.sql',
-];
-
-const db = new PGlite();
 
 const stubs = `
   CREATE SCHEMA IF NOT EXISTS auth;
@@ -38,43 +32,54 @@ const stubs = `
   END $$;
 `;
 
-try {
-  await db.exec(stubs);
-  console.log('OK stubs auth/roles');
+async function validate(label, files) {
+  const db = new PGlite();
+  try {
+    await db.exec(stubs);
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(root, file), 'utf8');
+      await db.exec(sql);
+      console.log(`OK ${label}: ${file}`);
+    }
 
-  for (const migration of migrations) {
-    const sql = fs.readFileSync(path.join(root, migration), 'utf8');
-    await db.exec(sql);
-    console.log('OK', migration);
+    const tables = await db.query(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name LIKE 'fx_%'
+      ORDER BY table_name
+    `);
+    console.log(`  Tablas (${tables.rows.length}):`, tables.rows.map((row) => row.table_name).join(', '));
+
+    const views = await db.query(`
+      SELECT table_name
+      FROM information_schema.views
+      WHERE table_schema = 'public' AND table_name LIKE 'fx_%'
+      ORDER BY table_name
+    `);
+    console.log(`  Vistas (${views.rows.length}):`, views.rows.map((row) => row.table_name).join(', '));
+
+    const functions = await db.query(`
+      SELECT routine_name
+      FROM information_schema.routines
+      WHERE routine_schema = 'public' AND routine_name LIKE 'fx_%'
+      ORDER BY routine_name
+    `);
+    console.log(
+      `  Funciones (${functions.rows.length}):`,
+      functions.rows.map((row) => row.routine_name).join(', '),
+    );
+  } finally {
+    await db.close();
   }
+}
 
-  const tables = await db.query(`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name LIKE 'fx_%'
-    ORDER BY table_name
-  `);
-  console.log('Tablas fx:', tables.rows.map((row) => row.table_name).join(', '));
-
-  const views = await db.query(`
-    SELECT table_name
-    FROM information_schema.views
-    WHERE table_schema = 'public' AND table_name LIKE 'fx_%'
-    ORDER BY table_name
-  `);
-  console.log('Vistas fx:', views.rows.map((row) => row.table_name).join(', '));
-
-  const functions = await db.query(`
-    SELECT routine_name
-    FROM information_schema.routines
-    WHERE routine_schema = 'public' AND routine_name LIKE 'fx_%'
-    ORDER BY routine_name
-  `);
-  console.log('Funciones fx:', functions.rows.map((row) => row.routine_name).join(', '));
+try {
+  await validate('individual', [
+    'supabase/migrations/202611040002_fx_casa_cambio.sql',
+    'supabase/migrations/202611040003_fx_rpc.sql',
+  ]);
+  await validate('consolidado', ['supabase/apply_all.sql']);
 } catch (error) {
   console.error('FALLO:', error.message);
-  if (error.position) console.error('Posición:', error.position);
   process.exitCode = 1;
-} finally {
-  await db.close();
 }

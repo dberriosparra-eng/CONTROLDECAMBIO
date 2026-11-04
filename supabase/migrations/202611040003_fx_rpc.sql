@@ -670,6 +670,346 @@ REVOKE ALL ON FUNCTION public.fx_save_cash_counts(uuid, uuid, jsonb) FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.fx_save_cash_counts(uuid, uuid, jsonb) TO authenticated;
 
 -- ----------------------------------------------------------------------------
+-- 05.b Mayoristas: cierre pactado y liquidaciones parciales
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.fx_register_wholesale_deal(
+  p_store_id uuid,
+  p_session_id uuid,
+  p_counterparty_id uuid,
+  p_deal_type text,
+  p_currency_code text,
+  p_agreed_qty numeric,
+  p_agreed_rate numeric,
+  p_business_date date,
+  p_notes text DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_session public.fx_sessions;
+  v_deal_id uuid;
+  v_movement_id uuid;
+  v_agreed_clp numeric;
+  v_currency text := upper(btrim(p_currency_code));
+  v_type text := upper(btrim(p_deal_type));
+BEGIN
+  IF NOT public.is_store_member(p_store_id) THEN
+    RAISE EXCEPTION 'Usuario sin acceso a esta tienda';
+  END IF;
+  IF v_type NOT IN ('COMPRA', 'VENTA') THEN
+    RAISE EXCEPTION 'Tipo de cierre mayorista inválido';
+  END IF;
+  IF p_agreed_qty IS NULL OR p_agreed_qty <= 0 OR p_agreed_rate IS NULL OR p_agreed_rate <= 0 THEN
+    RAISE EXCEPTION 'Cantidad y precio del cierre deben ser mayores a 0';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.fx_currencies WHERE code = v_currency) THEN
+    RAISE EXCEPTION 'Moneda no válida: %', v_currency;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.fx_counterparties
+    WHERE id = p_counterparty_id AND store_id = p_store_id
+  ) THEN
+    RAISE EXCEPTION 'Contraparte no válida';
+  END IF;
+
+  SELECT * INTO v_session
+  FROM public.fx_sessions
+  WHERE id = p_session_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Sesión no encontrada';
+  END IF;
+  IF v_session.status <> 'OPEN' THEN
+    RAISE EXCEPTION 'La sesión no está abierta';
+  END IF;
+
+  v_agreed_clp := ROUND(p_agreed_qty * p_agreed_rate, 2);
+
+  INSERT INTO public.fx_wholesale_deals (
+    store_id, session_id, counterparty_id, deal_type, currency_code,
+    agreed_qty, agreed_rate, agreed_clp, business_date, status, notes, created_by
+  ) VALUES (
+    p_store_id, p_session_id, p_counterparty_id, v_type, v_currency,
+    p_agreed_qty, p_agreed_rate, v_agreed_clp, p_business_date, 'ABIERTO',
+    p_notes, auth.uid()
+  ) RETURNING id INTO v_deal_id;
+
+  INSERT INTO public.fx_account_movements (
+    store_id, session_id, counterparty_id, movement_type,
+    business_date, status, note, created_by
+  ) VALUES (
+    p_store_id, p_session_id, p_counterparty_id,
+    CASE WHEN v_type = 'COMPRA' THEN 'MAYORISTA_COMPRA' ELSE 'MAYORISTA_VENTA' END,
+    p_business_date, 'ACTIVE', p_notes, auth.uid()
+  ) RETURNING id INTO v_movement_id;
+
+  IF v_type = 'COMPRA' THEN
+    INSERT INTO public.fx_account_lines (
+      store_id, movement_id, currency_code, side, amount_delta,
+      fx_rate, clp_equivalent, note
+    ) VALUES (
+      p_store_id, v_movement_id, v_currency, 'RECEIVABLE', p_agreed_qty,
+      p_agreed_rate, v_agreed_clp, 'Cierre mayorista: entrega pendiente'
+    );
+    INSERT INTO public.fx_account_lines (
+      store_id, movement_id, currency_code, side, amount_delta,
+      fx_rate, clp_equivalent, note
+    ) VALUES (
+      p_store_id, v_movement_id, 'CLP', 'PAYABLE', v_agreed_clp,
+      1, v_agreed_clp, 'Cierre mayorista: pago pendiente'
+    );
+  ELSE
+    INSERT INTO public.fx_account_lines (
+      store_id, movement_id, currency_code, side, amount_delta,
+      fx_rate, clp_equivalent, note
+    ) VALUES (
+      p_store_id, v_movement_id, v_currency, 'PAYABLE', p_agreed_qty,
+      p_agreed_rate, v_agreed_clp, 'Cierre mayorista: entrega pendiente'
+    );
+    INSERT INTO public.fx_account_lines (
+      store_id, movement_id, currency_code, side, amount_delta,
+      fx_rate, clp_equivalent, note
+    ) VALUES (
+      p_store_id, v_movement_id, 'CLP', 'RECEIVABLE', v_agreed_clp,
+      1, v_agreed_clp, 'Cierre mayorista: cobro pendiente'
+    );
+  END IF;
+
+  UPDATE public.fx_wholesale_deals
+  SET account_movement_id = v_movement_id
+  WHERE id = v_deal_id;
+
+  RETURN v_deal_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.fx_register_wholesale_deal(uuid, uuid, uuid, text, text, numeric, numeric, date, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fx_register_wholesale_deal(uuid, uuid, uuid, text, text, numeric, numeric, date, text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.fx_register_wholesale_settlement(
+  p_store_id uuid,
+  p_deal_id uuid,
+  p_session_id uuid,
+  p_settlement_type text,
+  p_amount numeric,
+  p_business_date date,
+  p_note text DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_deal public.fx_wholesale_deals;
+  v_session public.fx_sessions;
+  v_settlement_id uuid;
+  v_movement_id uuid;
+  v_type text := upper(btrim(p_settlement_type));
+  v_delivered numeric := 0;
+  v_paid numeric := 0;
+  v_pending_qty numeric;
+  v_pending_clp numeric;
+  v_clp numeric;
+  v_acquired timestamptz;
+BEGIN
+  IF NOT public.is_store_member(p_store_id) THEN
+    RAISE EXCEPTION 'Usuario sin acceso a esta tienda';
+  END IF;
+  IF v_type NOT IN ('ENTREGA_DIVISA', 'PAGO_CLP') THEN
+    RAISE EXCEPTION 'Tipo de liquidación inválido';
+  END IF;
+  IF p_amount IS NULL OR p_amount <= 0 THEN
+    RAISE EXCEPTION 'El monto de la liquidación debe ser mayor a 0';
+  END IF;
+
+  SELECT * INTO v_deal
+  FROM public.fx_wholesale_deals
+  WHERE id = p_deal_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Cierre mayorista no encontrado';
+  END IF;
+  IF v_deal.status IN ('CERRADO', 'ANULADO') THEN
+    RAISE EXCEPTION 'El cierre mayorista ya está %', v_deal.status;
+  END IF;
+
+  SELECT * INTO v_session
+  FROM public.fx_sessions
+  WHERE id = p_session_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Sesión no encontrada';
+  END IF;
+  IF v_session.status <> 'OPEN' THEN
+    RAISE EXCEPTION 'La sesión no está abierta';
+  END IF;
+
+  SELECT
+    COALESCE(SUM(CASE WHEN settlement_type = 'ENTREGA_DIVISA' THEN amount ELSE 0 END), 0),
+    COALESCE(SUM(CASE WHEN settlement_type = 'PAGO_CLP' THEN clp_amount ELSE 0 END), 0)
+  INTO v_delivered, v_paid
+  FROM public.fx_wholesale_settlements
+  WHERE deal_id = p_deal_id;
+
+  v_pending_qty := v_deal.agreed_qty - v_delivered;
+  v_pending_clp := v_deal.agreed_clp - v_paid;
+
+  IF v_type = 'ENTREGA_DIVISA' THEN
+    IF p_amount > v_pending_qty + 0.000001 THEN
+      RAISE EXCEPTION 'La entrega supera lo pendiente (% %)', v_pending_qty, v_deal.currency_code;
+    END IF;
+    v_clp := ROUND(p_amount * v_deal.agreed_rate, 2);
+  ELSE
+    IF p_amount > v_pending_clp + 0.01 THEN
+      RAISE EXCEPTION 'El pago supera lo pendiente (% CLP)', v_pending_clp;
+    END IF;
+    v_clp := p_amount;
+  END IF;
+
+  INSERT INTO public.fx_wholesale_settlements (
+    store_id, deal_id, session_id, settlement_type, currency_code,
+    amount, fx_rate, clp_amount, business_date, note, created_by
+  ) VALUES (
+    p_store_id, p_deal_id, p_session_id, v_type,
+    CASE WHEN v_type = 'ENTREGA_DIVISA' THEN v_deal.currency_code ELSE 'CLP' END,
+    p_amount,
+    CASE WHEN v_type = 'ENTREGA_DIVISA' THEN v_deal.agreed_rate ELSE 1 END,
+    v_clp, p_business_date, p_note, auth.uid()
+  ) RETURNING id INTO v_settlement_id;
+
+  INSERT INTO public.fx_account_movements (
+    store_id, session_id, counterparty_id, movement_type,
+    business_date, status, note, created_by
+  ) VALUES (
+    p_store_id, p_session_id, v_deal.counterparty_id,
+    CASE WHEN v_type = 'ENTREGA_DIVISA' THEN 'MAYORISTA_ENTREGA' ELSE 'MAYORISTA_PAGO' END,
+    p_business_date, 'ACTIVE', p_note, auth.uid()
+  ) RETURNING id INTO v_movement_id;
+
+  UPDATE public.fx_wholesale_settlements
+  SET account_movement_id = v_movement_id
+  WHERE id = v_settlement_id;
+
+  IF v_type = 'ENTREGA_DIVISA' THEN
+    IF v_deal.deal_type = 'COMPRA' THEN
+      INSERT INTO public.fx_account_lines (
+        store_id, movement_id, currency_code, side, amount_delta,
+        fx_rate, clp_equivalent, note
+      ) VALUES (
+        p_store_id, v_movement_id, v_deal.currency_code, 'RECEIVABLE', -p_amount,
+        v_deal.agreed_rate, -v_clp, 'Entrega recibida del proveedor'
+      );
+
+      v_acquired := p_business_date::timestamp + interval '12 hours';
+
+      INSERT INTO public.fx_lots (
+        store_id, currency_code, session_id, source_type,
+        source_account_movement_id, acquired_at,
+        original_qty, remaining_qty, unit_cost_clp, note
+      ) VALUES (
+        p_store_id, v_deal.currency_code, p_session_id, 'WHOLESALE',
+        v_movement_id, v_acquired, p_amount, p_amount, v_deal.agreed_rate,
+        'Mayorista ' || p_deal_id
+      );
+
+      INSERT INTO public.fx_inventory_movements (
+        store_id, session_id, currency_code, movement_type,
+        quantity_delta, unit_cost_clp, clp_delta, reference_type, reference_id,
+        business_date, note
+      ) VALUES (
+        p_store_id, p_session_id, v_deal.currency_code, 'PURCHASE',
+        p_amount, v_deal.agreed_rate, 0, 'WHOLESALE_SETTLEMENT', v_settlement_id,
+        p_business_date, p_note
+      );
+    ELSE
+      INSERT INTO public.fx_account_lines (
+        store_id, movement_id, currency_code, side, amount_delta,
+        fx_rate, clp_equivalent, note
+      ) VALUES (
+        p_store_id, v_movement_id, v_deal.currency_code, 'PAYABLE', -p_amount,
+        v_deal.agreed_rate, -v_clp, 'Entrega realizada al cliente'
+      );
+
+      PERFORM * FROM public.fx_consume_fifo(
+        p_store_id, v_deal.currency_code, p_amount, NULL, v_movement_id,
+        p_business_date::timestamp + interval '12 hours'
+      );
+
+      INSERT INTO public.fx_inventory_movements (
+        store_id, session_id, currency_code, movement_type,
+        quantity_delta, unit_cost_clp, clp_delta, reference_type, reference_id,
+        business_date, note
+      ) VALUES (
+        p_store_id, p_session_id, v_deal.currency_code, 'SALE',
+        -p_amount, v_deal.agreed_rate, 0, 'WHOLESALE_SETTLEMENT', v_settlement_id,
+        p_business_date, p_note
+      );
+    END IF;
+  ELSE
+    IF v_deal.deal_type = 'COMPRA' THEN
+      INSERT INTO public.fx_account_lines (
+        store_id, movement_id, currency_code, side, amount_delta,
+        fx_rate, clp_equivalent, note
+      ) VALUES (
+        p_store_id, v_movement_id, 'CLP', 'PAYABLE', -p_amount,
+        1, -p_amount, 'Pago al proveedor'
+      );
+    ELSE
+      INSERT INTO public.fx_account_lines (
+        store_id, movement_id, currency_code, side, amount_delta,
+        fx_rate, clp_equivalent, note
+      ) VALUES (
+        p_store_id, v_movement_id, 'CLP', 'RECEIVABLE', -p_amount,
+        1, -p_amount, 'Cobro del cliente'
+      );
+    END IF;
+
+    INSERT INTO public.fx_inventory_movements (
+      store_id, session_id, currency_code, movement_type,
+      quantity_delta, unit_cost_clp, clp_delta, reference_type, reference_id,
+      business_date, note
+    ) VALUES (
+      p_store_id, p_session_id, 'CLP',
+      CASE WHEN v_deal.deal_type = 'COMPRA' THEN 'PURCHASE' ELSE 'SALE' END,
+      CASE WHEN v_deal.deal_type = 'COMPRA' THEN -p_amount ELSE p_amount END,
+      1,
+      CASE WHEN v_deal.deal_type = 'COMPRA' THEN -p_amount ELSE p_amount END,
+      'WHOLESALE_SETTLEMENT', v_settlement_id,
+      p_business_date, p_note
+    );
+  END IF;
+
+  SELECT
+    COALESCE(SUM(CASE WHEN settlement_type = 'ENTREGA_DIVISA' THEN amount ELSE 0 END), 0),
+    COALESCE(SUM(CASE WHEN settlement_type = 'PAGO_CLP' THEN clp_amount ELSE 0 END), 0)
+  INTO v_delivered, v_paid
+  FROM public.fx_wholesale_settlements
+  WHERE deal_id = p_deal_id;
+
+  UPDATE public.fx_wholesale_deals
+  SET status = CASE
+    WHEN v_delivered >= agreed_qty - 0.000001 AND v_paid >= agreed_clp - 0.01 THEN 'CERRADO'
+    WHEN v_delivered > 0 OR v_paid > 0 THEN 'PARCIAL'
+    ELSE 'ABIERTO'
+  END
+  WHERE id = p_deal_id;
+
+  RETURN v_settlement_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.fx_register_wholesale_settlement(uuid, uuid, uuid, text, numeric, date, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fx_register_wholesale_settlement(uuid, uuid, uuid, text, numeric, date, text) TO authenticated;
+
+-- ----------------------------------------------------------------------------
 -- 06. Gastos
 -- ----------------------------------------------------------------------------
 
@@ -801,6 +1141,12 @@ BEGIN
   WHERE o.session_id = p_session_id
     AND o.operation = 'VENTA';
 
+  v_margin_clp := v_margin_clp + COALESCE((
+    SELECT SUM(realized_margin_clp)
+    FROM public.fx_wholesale_margin
+    WHERE session_id = p_session_id
+  ), 0);
+
   SELECT COALESCE(SUM(amount_clp), 0) INTO v_expenses_clp
   FROM public.fx_expenses
   WHERE session_id = p_session_id;
@@ -825,6 +1171,11 @@ BEGIN
       SELECT jsonb_agg(to_jsonb(a))
       FROM public.fx_account_balances a
       WHERE a.store_id = p_store_id
+    ), '[]'::jsonb),
+    'wholesale', COALESCE((
+      SELECT jsonb_agg(to_jsonb(w))
+      FROM public.fx_wholesale_deals_status w
+      WHERE w.store_id = p_store_id AND w.status <> 'ANULADO'
     ), '[]'::jsonb),
     'counts', COALESCE((
       SELECT jsonb_agg(to_jsonb(c))

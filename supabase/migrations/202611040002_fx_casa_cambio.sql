@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS public.fx_counterparties (
   name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 160),
   rut text,
   kind text NOT NULL DEFAULT 'TERCERO'
-    CHECK (kind IN ('CLIENTE', 'PROVEEDOR', 'TERCERO', 'EMPRESA')),
+    CHECK (kind IN ('CLIENTE', 'PROVEEDOR', 'TERCERO', 'EMPRESA', 'BANCO')),
   phone text,
   email text,
   notes text,
@@ -447,7 +447,7 @@ CREATE TABLE IF NOT EXISTS public.fx_lots (
   currency_code text NOT NULL REFERENCES public.fx_currencies(code) ON DELETE RESTRICT,
   session_id uuid REFERENCES public.fx_sessions(id) ON DELETE SET NULL,
   source_type text NOT NULL DEFAULT 'OPENING'
-    CHECK (source_type IN ('OPENING', 'PURCHASE', 'LOAN_IN', 'TRANSFER_IN', 'REPAYMENT_IN', 'ADJUSTMENT')),
+    CHECK (source_type IN ('OPENING', 'PURCHASE', 'WHOLESALE', 'LOAN_IN', 'TRANSFER_IN', 'REPAYMENT_IN', 'ADJUSTMENT')),
   source_operation_id uuid REFERENCES public.fx_operations(id) ON DELETE SET NULL,
   source_account_movement_id uuid,
   acquired_at timestamptz NOT NULL DEFAULT now(),
@@ -525,7 +525,9 @@ CREATE TABLE IF NOT EXISTS public.fx_account_movements (
   movement_type text NOT NULL CHECK (movement_type IN (
     'PRESTAMO_OTORGADO', 'PRESTAMO_RECIBIDO', 'COBRO_DEUDA',
     'PAGO_DEUDA', 'ENTREGA', 'RETIRO', 'VENTA_CREDITO',
-    'COMPRA_CREDITO', 'AJUSTE'
+    'COMPRA_CREDITO', 'AJUSTE',
+    'MAYORISTA_COMPRA', 'MAYORISTA_VENTA',
+    'MAYORISTA_ENTREGA', 'MAYORISTA_PAGO'
   )),
   business_date date NOT NULL,
   status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'REVERSED')),
@@ -559,6 +561,83 @@ CREATE INDEX IF NOT EXISTS fx_account_lines_balance_idx
 
 CREATE INDEX IF NOT EXISTS fx_account_lines_movement_idx
   ON public.fx_account_lines (movement_id);
+
+-- ----------------------------------------------------------------------------
+-- 07.b Mayoristas: cierre pactado con entregas/pagos parciales
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.fx_wholesale_deals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+  session_id uuid NOT NULL REFERENCES public.fx_sessions(id) ON DELETE CASCADE,
+  counterparty_id uuid NOT NULL REFERENCES public.fx_counterparties(id) ON DELETE RESTRICT,
+  deal_type text NOT NULL CHECK (deal_type IN ('COMPRA', 'VENTA')),
+  currency_code text NOT NULL REFERENCES public.fx_currencies(code) ON DELETE RESTRICT,
+  agreed_qty numeric(24,6) NOT NULL CHECK (agreed_qty > 0),
+  agreed_rate numeric(20,8) NOT NULL CHECK (agreed_rate > 0),
+  agreed_clp numeric(20,2) NOT NULL CHECK (agreed_clp >= 0),
+  business_date date NOT NULL,
+  status text NOT NULL DEFAULT 'ABIERTO'
+    CHECK (status IN ('ABIERTO', 'PARCIAL', 'CERRADO', 'ANULADO')),
+  account_movement_id uuid REFERENCES public.fx_account_movements(id) ON DELETE SET NULL,
+  notes text,
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS fx_wholesale_deals_store_date_idx
+  ON public.fx_wholesale_deals (store_id, business_date DESC);
+
+CREATE INDEX IF NOT EXISTS fx_wholesale_deals_counterparty_idx
+  ON public.fx_wholesale_deals (counterparty_id, business_date DESC);
+
+CREATE TABLE IF NOT EXISTS public.fx_wholesale_settlements (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+  deal_id uuid NOT NULL REFERENCES public.fx_wholesale_deals(id) ON DELETE CASCADE,
+  session_id uuid NOT NULL REFERENCES public.fx_sessions(id) ON DELETE CASCADE,
+  settlement_type text NOT NULL
+    CHECK (settlement_type IN ('ENTREGA_DIVISA', 'PAGO_CLP', 'AJUSTE')),
+  currency_code text NOT NULL REFERENCES public.fx_currencies(code) ON DELETE RESTRICT,
+  amount numeric(24,6) NOT NULL CHECK (amount > 0),
+  fx_rate numeric(20,8) NOT NULL CHECK (fx_rate > 0),
+  clp_amount numeric(20,2) NOT NULL CHECK (clp_amount >= 0),
+  business_date date NOT NULL,
+  account_movement_id uuid REFERENCES public.fx_account_movements(id) ON DELETE SET NULL,
+  note text,
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS fx_wholesale_settlements_deal_idx
+  ON public.fx_wholesale_settlements (deal_id, business_date);
+
+CREATE OR REPLACE VIEW public.fx_wholesale_deals_status AS
+SELECT
+  d.id,
+  d.store_id,
+  d.session_id,
+  d.counterparty_id,
+  d.deal_type,
+  d.currency_code,
+  d.agreed_qty,
+  d.agreed_rate,
+  d.agreed_clp,
+  d.business_date,
+  d.status,
+  d.notes,
+  d.created_at,
+  COALESCE(SUM(CASE WHEN s.settlement_type = 'ENTREGA_DIVISA' THEN s.amount ELSE 0 END), 0)
+    AS delivered_qty,
+  COALESCE(SUM(CASE WHEN s.settlement_type = 'PAGO_CLP' THEN s.clp_amount ELSE 0 END), 0)
+    AS paid_clp,
+  d.agreed_qty - COALESCE(SUM(CASE WHEN s.settlement_type = 'ENTREGA_DIVISA' THEN s.amount ELSE 0 END), 0)
+    AS pending_qty,
+  d.agreed_clp - COALESCE(SUM(CASE WHEN s.settlement_type = 'PAGO_CLP' THEN s.clp_amount ELSE 0 END), 0)
+    AS pending_clp
+FROM public.fx_wholesale_deals d
+LEFT JOIN public.fx_wholesale_settlements s ON s.deal_id = d.id
+GROUP BY d.id;
 
 -- Relaciones diferidas: los movimientos de cuenta corriente pueden originar
 -- capas FIFO (préstamo recibido) o consumos (préstamo otorgado).
@@ -736,20 +815,54 @@ FROM public.fx_lots
 WHERE remaining_qty > 0
 GROUP BY store_id, currency_code;
 
+CREATE OR REPLACE VIEW public.fx_wholesale_margin AS
+SELECT
+  d.store_id,
+  d.session_id,
+  d.id AS deal_id,
+  SUM(
+    CASE
+      WHEN d.deal_type = 'VENTA' AND s.settlement_type = 'ENTREGA_DIVISA'
+      THEN s.clp_amount - COALESCE(c.cost, 0)
+      ELSE 0
+    END
+  ) AS realized_margin_clp
+FROM public.fx_wholesale_deals d
+JOIN public.fx_wholesale_settlements s ON s.deal_id = d.id
+LEFT JOIN (
+  SELECT account_movement_id, SUM(total_cost_clp) AS cost
+  FROM public.fx_lot_consumptions
+  WHERE reversed_at IS NULL AND account_movement_id IS NOT NULL
+  GROUP BY account_movement_id
+) c ON c.account_movement_id = s.account_movement_id
+GROUP BY d.store_id, d.session_id, d.id;
+
 CREATE OR REPLACE VIEW public.fx_session_margin AS
 SELECT
-  o.store_id,
-  o.session_id,
-  SUM(o.clp_amount - COALESCE(c.cost, 0)) AS realized_margin_clp
-FROM public.fx_valid_operations o
-LEFT JOIN (
-  SELECT operation_id, SUM(total_cost_clp) AS cost
-  FROM public.fx_lot_consumptions
-  WHERE reversed_at IS NULL
-  GROUP BY operation_id
-) c ON c.operation_id = o.id
-WHERE o.operation = 'VENTA'
-GROUP BY o.store_id, o.session_id;
+  store_id,
+  session_id,
+  SUM(realized_margin_clp) AS realized_margin_clp
+FROM (
+  SELECT
+    o.store_id,
+    o.session_id,
+    SUM(o.clp_amount - COALESCE(c.cost, 0)) AS realized_margin_clp
+  FROM public.fx_valid_operations o
+  LEFT JOIN (
+    SELECT operation_id, SUM(total_cost_clp) AS cost
+    FROM public.fx_lot_consumptions
+    WHERE reversed_at IS NULL
+    GROUP BY operation_id
+  ) c ON c.operation_id = o.id
+  WHERE o.operation = 'VENTA'
+  GROUP BY o.store_id, o.session_id
+
+  UNION ALL
+
+  SELECT store_id, session_id, realized_margin_clp
+  FROM public.fx_wholesale_margin
+) margins
+GROUP BY store_id, session_id;
 
 CREATE OR REPLACE VIEW public.fx_account_balances AS
 SELECT
@@ -969,6 +1082,7 @@ DECLARE
     'fx_counterparties', 'fx_documents', 'fx_operations',
     'fx_st_folios', 'fx_lots', 'fx_lot_consumptions',
     'fx_inventory_movements', 'fx_account_movements', 'fx_account_lines',
+    'fx_wholesale_deals', 'fx_wholesale_settlements',
     'fx_cash_counts', 'fx_closures', 'fx_expenses'
   ];
 BEGIN
@@ -997,6 +1111,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.fx_inventory_movements,
   public.fx_account_movements,
   public.fx_account_lines,
+  public.fx_wholesale_deals,
+  public.fx_wholesale_settlements,
   public.fx_cash_counts,
   public.fx_closures,
   public.fx_expenses
@@ -1011,7 +1127,9 @@ GRANT SELECT ON
   public.fx_session_inventory_balance,
   public.fx_inventory_valuation,
   public.fx_session_margin,
+  public.fx_wholesale_margin,
   public.fx_account_balances,
+  public.fx_wholesale_deals_status,
   public.fx_session_currency_summary
 TO authenticated;
 

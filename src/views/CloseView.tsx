@@ -19,16 +19,16 @@ import {
   listCashCounts,
   listClosures,
   listExpenses,
-  listOperations,
+  listWholesaleDeals,
   type AccountBalanceRow,
   type CashCountRow,
   type ClosureRow,
   type ExpenseRow,
   type FxSession,
-  type OperationRow,
   type SessionSummaryRow,
+  type WholesaleDealRow,
 } from '../lib/db';
-import { errorMessage, formatClp, formatDate, formatQty } from '../lib/format';
+import { errorMessage, formatClp, formatDate, formatQty, formatRate } from '../lib/format';
 
 export default function CloseView({
   storeId,
@@ -40,10 +40,10 @@ export default function CloseView({
   onClosed: () => void;
 }) {
   const [summary, setSummary] = useState<SessionSummaryRow[]>([]);
-  const [operations, setOperations] = useState<OperationRow[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceRow[]>([]);
   const [counts, setCounts] = useState<CashCountRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [wholesaleDeals, setWholesaleDeals] = useState<WholesaleDealRow[]>([]);
   const [closures, setClosures] = useState<ClosureRow[]>([]);
   const [margin, setMargin] = useState(0);
   const [notes, setNotes] = useState('');
@@ -58,26 +58,26 @@ export default function CloseView({
     try {
       const [
         summaryRows,
-        operationRows,
         accountRows,
         countRows,
         expenseRows,
+        wholesaleRows,
         closureRows,
         marginValue,
       ] = await Promise.all([
         getSessionSummary(session.id),
-        listOperations(session.id),
         listAccountBalances(storeId),
         listCashCounts(session.id),
         listExpenses(session.id),
+        listWholesaleDeals(storeId),
         listClosures(storeId),
         getSessionMargin(session.id),
       ]);
       setSummary(summaryRows);
-      setOperations(operationRows);
       setAccounts(accountRows);
       setCounts(countRows);
       setExpenses(expenseRows);
+      setWholesaleDeals(wholesaleRows);
       setClosures(closureRows);
       setMargin(marginValue);
     } catch (caught) {
@@ -298,28 +298,70 @@ export default function CloseView({
 
       <Card>
         <SectionTitle
-          title="3. Ventas mayoristas"
-          subtitle="Tickets marcados como mayoristas en la sesión."
+          title="3. Cierres mayoristas"
+          subtitle="Precio pactado con proveedores/clientes, entregas y pagos parciales."
         />
-        {operations.filter((row) => row.document?.is_wholesale).length === 0 ? (
-          <EmptyState title="Sin ventas mayoristas" description="No hay tickets marcados en esta sesión." />
+        {wholesaleDeals.length === 0 ? (
+          <EmptyState
+            title="Sin cierres mayoristas"
+            description="No hay cierres pactados registrados."
+          />
         ) : (
-          <div className="space-y-2">
-            {operations
-              .filter((row) => row.document?.is_wholesale)
-              .map((row) => (
-                <div
-                  key={row.id}
-                  className="flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2"
-                >
-                  <span className="text-sm text-slate-200">
-                    {row.document?.folio} · {row.currency_code}
-                  </span>
-                  <span className="text-sm font-semibold text-white">
-                    {formatClp(row.clp_amount)}
-                  </span>
-                </div>
-              ))}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-slate-500">
+                  <th className="py-2 pr-3 font-semibold">Contraparte</th>
+                  <th className="px-3 py-2 font-semibold">Tipo</th>
+                  <th className="px-3 py-2 font-semibold">Divisa</th>
+                  <th className="px-3 py-2 text-right font-semibold">Pactado</th>
+                  <th className="px-3 py-2 text-right font-semibold">Entregado</th>
+                  <th className="px-3 py-2 text-right font-semibold">Pagado</th>
+                  <th className="px-3 py-2 text-right font-semibold">Pendiente</th>
+                  <th className="px-3 py-2 font-semibold">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wholesaleDeals.map((deal) => (
+                  <tr key={deal.id} className="border-b border-white/[0.04]">
+                    <td className="py-2 pr-3 text-slate-200">{deal.counterparty_name}</td>
+                    <td className="px-3 py-2">
+                      <Badge tone={deal.deal_type === 'COMPRA' ? 'green' : 'rose'}>
+                        {deal.deal_type}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 font-semibold text-slate-200">
+                      {deal.currency_code}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {formatQty(deal.agreed_qty)} @ {formatRate(deal.agreed_rate)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-emerald-300">
+                      {formatQty(deal.delivered_qty)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-indigo-300">
+                      {formatClp(deal.paid_clp)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-amber-300">
+                      {formatQty(deal.pending_qty)} / {formatClp(deal.pending_clp)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge
+                        tone={
+                          deal.status === 'CERRADO'
+                            ? 'green'
+                            : deal.status === 'PARCIAL'
+                              ? 'amber'
+                              : 'indigo'
+                        }
+                      >
+                        {deal.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>

@@ -266,6 +266,108 @@ async function main() {
   ).rows[0].expected_qty;
   closeTo(afterLoan, 70, 'USD tras préstamo = 70');
 
+  // Cierre mayorista: pacto 100 USD @ 960, entrega 40 USD y pago 30.000 CLP.
+  const wholesaler = (
+    await db.query(
+      `INSERT INTO fx_counterparties(store_id, name, kind)
+       VALUES ($1, 'Proveedor Mayorista', 'PROVEEDOR') RETURNING id`,
+      [store],
+    )
+  ).rows[0].id;
+
+  const deal = (
+    await db.query(
+      `SELECT fx_register_wholesale_deal($1, $2, $3, 'COMPRA', 'USD', 100, 960, '2026-09-01', 'Cierre de prueba') AS id`,
+      [store, session, wholesaler],
+    )
+  ).rows[0].id;
+
+  await db.query(
+    `SELECT fx_register_wholesale_settlement($1, $2, $3, 'ENTREGA_DIVISA', 40, '2026-09-01', 'Entrega parcial')`,
+    [store, deal, session],
+  );
+  await db.query(
+    `SELECT fx_register_wholesale_settlement($1, $2, $3, 'PAGO_CLP', 30000, '2026-09-01', 'Pago parcial')`,
+    [store, deal, session],
+  );
+
+  const dealStatus = (
+    await db.query(`SELECT * FROM fx_wholesale_deals_status WHERE id = $1`, [deal])
+  ).rows[0];
+  closeTo(dealStatus.delivered_qty, 40, 'entrega mayorista = 40');
+  closeTo(dealStatus.paid_clp, 30000, 'pago mayorista = 30.000');
+  closeTo(dealStatus.pending_qty, 60, 'pendiente divisa = 60');
+  closeTo(dealStatus.pending_clp, 66000, 'pendiente CLP = 66.000');
+  assert(dealStatus.status === 'PARCIAL', 'cierre mayorista parcial');
+
+  const wholesaleAccount = (
+    await db.query(
+      `SELECT currency_code, receivable, payable, net
+       FROM fx_account_balances
+       WHERE store_id = $1 AND counterparty_id = $2
+       ORDER BY currency_code`,
+      [store, wholesaler],
+    )
+  ).rows;
+  closeTo(
+    wholesaleAccount.find((row) => row.currency_code === 'USD').receivable,
+    60,
+    'deudor mayorista USD = 60',
+  );
+  closeTo(
+    wholesaleAccount.find((row) => row.currency_code === 'CLP').payable,
+    66000,
+    'acreedor mayorista CLP = 66.000',
+  );
+
+  // Cierre mayorista de venta: 20 USD @ 1.000, entrega total y cobro total.
+  const wholesaleClient = (
+    await db.query(
+      `INSERT INTO fx_counterparties(store_id, name, kind)
+       VALUES ($1, 'Cliente Mayorista', 'CLIENTE') RETURNING id`,
+      [store],
+    )
+  ).rows[0].id;
+
+  const saleDeal = (
+    await db.query(
+      `SELECT fx_register_wholesale_deal($1, $2, $3, 'VENTA', 'USD', 20, 1000, '2026-09-01', 'Venta mayorista') AS id`,
+      [store, session, wholesaleClient],
+    )
+  ).rows[0].id;
+
+  await db.query(
+    `SELECT fx_register_wholesale_settlement($1, $2, $3, 'ENTREGA_DIVISA', 20, '2026-09-01', 'Entrega total')`,
+    [store, saleDeal, session],
+  );
+  await db.query(
+    `SELECT fx_register_wholesale_settlement($1, $2, $3, 'PAGO_CLP', 20000, '2026-09-01', 'Cobro total')`,
+    [store, saleDeal, session],
+  );
+
+  const saleDealStatus = (
+    await db.query(`SELECT * FROM fx_wholesale_deals_status WHERE id = $1`, [saleDeal])
+  ).rows[0];
+  assert(saleDealStatus.status === 'CERRADO', 'cierre mayorista de venta cerrado');
+  closeTo(saleDealStatus.pending_qty, 0, 'venta mayorista sin pendiente divisa');
+  closeTo(saleDealStatus.pending_clp, 0, 'venta mayorista sin pendiente CLP');
+
+  const wholesaleMargin = (
+    await db.query(
+      `SELECT realized_margin_clp FROM fx_wholesale_margin WHERE deal_id = $1`,
+      [saleDeal],
+    )
+  ).rows[0].realized_margin_clp;
+  closeTo(wholesaleMargin, 1000, 'margen mayorista = 1.000');
+
+  const totalMargin = (
+    await db.query(
+      `SELECT realized_margin_clp FROM fx_session_margin WHERE session_id = $1`,
+      [session],
+    )
+  ).rows[0].realized_margin_clp;
+  closeTo(totalMargin, 9600, 'margen total = 9.600');
+
   // Gasto: descuenta caja CLP y resultado.
   await db.query(
     `SELECT fx_register_expense($1, $2, '2026-09-01', 'Arriendo', 'ARRIENDO', 20000, 'prueba')`,
@@ -290,22 +392,26 @@ async function main() {
       session,
     ])
   ).rows[0];
-  closeTo(closure.total_cash_clp, 1002600, 'caja CLP de cierre');
-  closeTo(closure.realized_margin_clp, 8600, 'margen de cierre');
+  closeTo(closure.total_cash_clp, 992600, 'caja CLP de cierre');
+  closeTo(closure.total_inventory_clp, 85900, 'inventario FIFO de cierre');
+  closeTo(closure.total_capital_clp, 1078500, 'capital de cierre');
+  closeTo(closure.realized_margin_clp, 9600, 'margen de cierre');
   closeTo(closure.expenses_clp, 20000, 'gastos de cierre');
-  closeTo(closure.net_result_clp, -11400, 'resultado de cierre');
+  closeTo(closure.net_result_clp, -10400, 'resultado de cierre');
 
   const closedSession = (
     await db.query(`SELECT status FROM fx_sessions WHERE id = $1`, [session])
   ).rows[0].status;
   assert(closedSession === 'CLOSED', 'sesión cerrada');
 
-  console.log('OK flujo completo: apertura, importación, ST, FIFO, cuentas, conteo y cierre');
-  console.log('Resumen:', {
-    usd: Number(usd.expected_qty),
-    clp: Number(clp.expected_qty),
-    margin: Number(margin),
-    capital: Number(closure.total_capital_clp),
+  console.log('OK flujo completo: apertura, importación, ST, FIFO, cuentas, mayoristas, gastos, conteo y cierre');
+  console.log('Resumen de cierre:', {
+    cash_clp: Number(closure.total_cash_clp),
+    inventory_clp: Number(closure.total_inventory_clp),
+    margin_clp: Number(closure.realized_margin_clp),
+    expenses_clp: Number(closure.expenses_clp),
+    net_result_clp: Number(closure.net_result_clp),
+    capital_clp: Number(closure.total_capital_clp),
   });
 }
 

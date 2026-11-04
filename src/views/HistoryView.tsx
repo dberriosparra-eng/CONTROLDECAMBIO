@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, CalendarRange } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import {
   Badge,
   Card,
@@ -8,6 +8,7 @@ import {
   Select,
   Spinner,
 } from '../components/ui';
+import PeriodFilter, { periodRange } from '../components/PeriodFilter';
 import {
   listClosures,
   listDailyStats,
@@ -17,6 +18,9 @@ import {
 import { errorMessage, formatClp, formatDate, formatQty, formatRate } from '../lib/format';
 
 export default function HistoryView({ storeId }: { storeId: string }) {
+  const initial = periodRange('MES');
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
   const [closures, setClosures] = useState<ClosureRow[]>([]);
   const [stats, setStats] = useState<DailyStatRow[]>([]);
   const [currency, setCurrency] = useState('USD');
@@ -28,13 +32,7 @@ export default function HistoryView({ storeId }: { storeId: string }) {
     setLoading(true);
     setError(null);
 
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - 120);
-    const fromIso = from.toISOString().slice(0, 10);
-    const toIso = to.toISOString().slice(0, 10);
-
-    Promise.all([listClosures(storeId), listDailyStats(storeId, fromIso, toIso)])
+    Promise.all([listClosures(storeId), listDailyStats(storeId, from, to)])
       .then(([closureRows, statRows]) => {
         if (cancelled) return;
         setClosures(closureRows);
@@ -55,18 +53,26 @@ export default function HistoryView({ storeId }: { storeId: string }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId]);
+  }, [storeId, from, to]);
 
   const currencies = useMemo(
     () => [...new Set(stats.map((row) => row.currency_code))].sort(),
     [stats],
   );
 
-  const monthly = useMemo(() => {
+  const days = useMemo(() => {
+    const start = new Date(`${from}T12:00:00`).getTime();
+    const end = new Date(`${to}T12:00:00`).getTime();
+    return Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+  }, [from, to]);
+
+  const useDaily = days <= 31;
+
+  const periods = useMemo(() => {
     const map = new Map<
       string,
       {
-        month: string;
+        period: string;
         buyQty: number;
         buyClp: number;
         sellQty: number;
@@ -76,9 +82,9 @@ export default function HistoryView({ storeId }: { storeId: string }) {
 
     for (const row of stats) {
       if (row.currency_code !== currency) continue;
-      const month = row.business_date.slice(0, 7);
-      const current = map.get(month) ?? {
-        month,
+      const period = useDaily ? row.business_date : row.business_date.slice(0, 7);
+      const current = map.get(period) ?? {
+        period,
         buyQty: 0,
         buyClp: 0,
         sellQty: 0,
@@ -88,7 +94,7 @@ export default function HistoryView({ storeId }: { storeId: string }) {
       current.buyClp += Number(row.buy_clp) || 0;
       current.sellQty += Number(row.sell_qty) || 0;
       current.sellClp += Number(row.sell_clp) || 0;
-      map.set(month, current);
+      map.set(period, current);
     }
 
     return [...map.values()]
@@ -97,12 +103,12 @@ export default function HistoryView({ storeId }: { storeId: string }) {
         avgBuy: row.buyQty > 0 ? row.buyClp / row.buyQty : 0,
         avgSell: row.sellQty > 0 ? row.sellClp / row.sellQty : 0,
       }))
-      .sort((a, b) => a.month.localeCompare(b.month));
-  }, [stats, currency]);
+      .sort((a, b) => a.period.localeCompare(b.period));
+  }, [stats, currency, useDaily]);
 
   const maxRate = Math.max(
     1,
-    ...monthly.flatMap((row) => [row.avgBuy, row.avgSell]),
+    ...periods.flatMap((row) => [row.avgBuy, row.avgSell]),
   );
 
   if (loading) return <Spinner label="Cargando histórico…" />;
@@ -113,11 +119,18 @@ export default function HistoryView({ storeId }: { storeId: string }) {
 
       <Card>
         <SectionTitle
-          title="Promedios mensuales"
+          title={useDaily ? 'Promedios diarios' : 'Promedios mensuales'}
           subtitle="Promedio ponderado por volumen: CLP total ÷ cantidad total. No es promedio de promedios."
           action={
-            <div className="flex items-center gap-2">
-              <CalendarRange className="h-4 w-4 text-slate-500" />
+            <div className="flex flex-wrap items-center gap-2">
+              <PeriodFilter
+                from={from}
+                to={to}
+                onChange={(nextFrom, nextTo) => {
+                  setFrom(nextFrom);
+                  setTo(nextTo);
+                }}
+              />
               <Select
                 value={currency}
                 onChange={(event) => setCurrency(event.target.value)}
@@ -133,17 +146,17 @@ export default function HistoryView({ storeId }: { storeId: string }) {
           }
         />
 
-        {monthly.length === 0 ? (
+        {periods.length === 0 ? (
           <p className="py-8 text-center text-sm text-slate-500">
             No hay estadísticas para la divisa seleccionada.
           </p>
         ) : (
           <div className="space-y-5">
             <div className="space-y-4">
-              {monthly.map((row) => (
-                <div key={row.month}>
+              {periods.map((row) => (
+                <div key={row.period}>
                   <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-300">{row.month}</span>
+                    <span className="font-semibold text-slate-300">{row.period}</span>
                     <span className="text-slate-500">
                       Compra {formatRate(row.avgBuy)} · Venta {formatRate(row.avgSell)}
                     </span>
@@ -180,9 +193,9 @@ export default function HistoryView({ storeId }: { storeId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {monthly.map((row) => (
-                    <tr key={row.month} className="border-b border-white/[0.04]">
-                      <td className="py-2 pr-3 font-semibold text-slate-200">{row.month}</td>
+                  {periods.map((row) => (
+                    <tr key={row.period} className="border-b border-white/[0.04]">
+                      <td className="py-2 pr-3 font-semibold text-slate-200">{row.period}</td>
                       <td className="px-3 py-2 text-right text-slate-300">
                         {formatQty(row.buyQty)}
                       </td>

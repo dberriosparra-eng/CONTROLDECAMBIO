@@ -207,7 +207,7 @@ export default function OperationsView({
           >
             <option value="ALL">Todos los estados</option>
             <option value="VALID">Válidas</option>
-            <option value="VOID_ST">ST</option>
+            <option value="VOID_ST">Nulas (ST)</option>
             <option value="VOID_NC">Anuladas NC</option>
           </Select>
         </div>
@@ -280,7 +280,7 @@ export default function OperationsView({
                       {row.document?.status === 'VALID'
                         ? 'Válida'
                         : row.document?.status === 'VOID_ST'
-                          ? 'ST'
+                          ? 'Nula (ST)'
                           : row.document?.status ?? '—'}
                     </Badge>
                   </td>

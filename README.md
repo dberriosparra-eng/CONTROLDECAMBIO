@@ -114,15 +114,26 @@ tests/               Pruebas del dominio
 
 1. **Apertura:** elegir fecha, cargar saldos iniciales por divisa y costo unitario. Se crean las capas FIFO de apertura.
 2. **Importar reporte:** subir `.xlsx`, revisar la vista previa, ingresar folios ST y confirmar. Las boletas ST quedan registradas pero no suman.
-3. **Operaciones:** revisar compras/ventas, marcar mayoristas, anular o reversar ST.
-4. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa.
-5. **Cuadratura:** contar billetes/monedas por denominación y comparar contra el saldo esperado.
-6. **Cierre:** generar el reporte jerárquico y la valorización FIFO del inventario.
-7. **Histórico:** consultar promedios mensuales de compra/venta y volúmenes.
+3. **Operaciones:** revisar compras/ventas y anular boletas nulas (ST).
+4. **Mayoristas:** pactar una divisa a precio fijo y registrar entregas/pagos parciales; pueden quedar saldos por ambas partes.
+5. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa. Los bancos se crean como contraparte `BANCO`.
+6. **Gastos:** registrar egresos y consultar el cuadro por categoría y período.
+7. **Cuadratura:** contar billetes/monedas por denominación y comparar contra el saldo esperado.
+8. **Cierre:** generar el reporte jerárquico, el cuadro de gastos y la valorización FIFO del inventario.
+9. **Histórico:** consultar promedios por semana, mes, año o rango personalizado.
 
 ## Documentación funcional
 
 - `docs/CAJA-TEMUCO-ANALISIS-DISENO.md`: lectura de `Reporte.xlsx` y `CAJA TEMUCO V5.xlsx`, hallazgos, modelo de datos, reglas contables, UI y plan de implementación.
+
+Decisiones de negocio ya aplicadas:
+
+- **ST = boleta nula**: se registra solo para auditoría y no suma en ningún cálculo.
+- **`DEUDAS TCO`**: fuera de alcance; no se migra ni se considera.
+- **`ARGENTINO T`**: ARS por transferencia, separado del efectivo.
+- **Mayoristas**: cierre pactado con entregas/pagos parciales.
+- **Bancos**: contrapartes de tipo `BANCO`.
+- **Períodos**: semana, mes, año y rango personalizado.
 
 ## Estado
 
@@ -131,9 +142,12 @@ tests/               Pruebas del dominio
 - [x] Núcleo de dominio FIFO/ST/cuentas/cuadratura.
 - [x] RPC transaccionales de apertura, importación, cuentas, conteo y cierre.
 - [x] Vistas de la interfaz conectadas a Supabase.
-- [x] Importación de `Reporte.xlsx` con vista previa y exclusión ST.
+- [x] Importación de `Reporte.xlsx` con vista previa y exclusión de boletas nulas (ST).
+- [x] Cierres mayoristas con precio pactado, entregas y pagos parciales.
+- [x] Gastos con cuadro por categoría y período.
+- [x] Períodos semana / mes / año / personalizado.
+- [x] Bancos como contrapartes (`BANCO`) en cuentas corrientes.
 - [ ] Migración del histórico completo de los Excel.
-- [ ] Reglas finas de `DEUDAS TCO` (pendiente de validar con el negocio).
 - [ ] Adjuntos/exportación PDF del cierre (hoy usa impresión del navegador).
 
 ## Seguridad

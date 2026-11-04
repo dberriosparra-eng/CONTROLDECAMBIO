@@ -97,7 +97,7 @@ export default function SettingsView({ storeId }: { storeId: string }) {
         </Card>
         <Card className="p-4">
           <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-            <KeyRound className="h-3.5 w-3.5" /> ST activos
+            <KeyRound className="h-3.5 w-3.5" /> Nulas activas
           </p>
           <p className="mt-1 text-2xl font-bold text-amber-300">{activeSt.length}</p>
         </Card>
@@ -136,11 +136,11 @@ export default function SettingsView({ storeId }: { storeId: string }) {
 
       <Card>
         <SectionTitle
-          title="Folios ST"
-          subtitle="Registro de auditoría. Reversar un ST vuelve a procesar el documento si corresponde."
+          title="Boletas nulas (ST)"
+          subtitle="Registro de auditoría. Reversar una nula vuelve a procesar el documento si corresponde."
         />
         {stFolios.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-500">Sin folios ST.</p>
+          <p className="py-6 text-center text-sm text-slate-500">Sin boletas nulas.</p>
         ) : (
           <div className="max-h-72 space-y-2 overflow-y-auto">
             {stFolios.map((item) => (

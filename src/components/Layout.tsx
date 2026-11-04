@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   FileUp,
+  Handshake,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -24,6 +25,7 @@ export type TabKey =
   | 'opening'
   | 'import'
   | 'operations'
+  | 'wholesale'
   | 'accounts'
   | 'expenses'
   | 'cashcount'
@@ -42,6 +44,7 @@ const NAV: Array<{
       { id: 'opening', label: 'Apertura', icon: Wallet },
       { id: 'import', label: 'Importar reporte', icon: FileUp },
       { id: 'operations', label: 'Operaciones', icon: ArrowLeftRight },
+      { id: 'wholesale', label: 'Mayoristas', icon: Handshake },
       { id: 'cashcount', label: 'Cuadratura', icon: Banknote },
       { id: 'close', label: 'Cierre', icon: ClipboardCheck },
     ],
@@ -62,6 +65,7 @@ const LABELS: Record<TabKey, string> = {
   opening: 'Apertura de caja',
   import: 'Importar reporte',
   operations: 'Operaciones del día',
+  wholesale: 'Cierres mayoristas',
   accounts: 'Cuentas corrientes',
   expenses: 'Gastos del día',
   cashcount: 'Cuadratura',

@@ -10,8 +10,9 @@ import {
   Spinner,
   SuccessBanner,
 } from '../components/ui';
+import PeriodFilter, { periodRange } from '../components/PeriodFilter';
 import {
-  listExpenses,
+  listExpensesRange,
   registerExpense,
   type ExpenseRow,
   type FxSession,
@@ -37,6 +38,9 @@ export default function ExpensesView({
   session: FxSession;
   onChanged: () => void;
 }) {
+  const initial = periodRange('MES');
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [concept, setConcept] = useState('');
   const [category, setCategory] = useState('OPERACIONAL');
@@ -51,7 +55,7 @@ export default function ExpensesView({
     setLoading(true);
     setError(null);
     try {
-      setExpenses(await listExpenses(session.id));
+      setExpenses(await listExpensesRange(storeId, from, to));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -62,12 +66,20 @@ export default function ExpensesView({
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id]);
+  }, [storeId, from, to]);
 
   const total = useMemo(
     () => expenses.reduce((sum, row) => sum + Number(row.amount_clp || 0), 0),
     [expenses],
   );
+
+  const byCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of expenses) {
+      map.set(row.category, (map.get(row.category) ?? 0) + Number(row.amount_clp || 0));
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [expenses]);
 
   async function handleSubmit() {
     if (!concept.trim()) {
@@ -112,6 +124,42 @@ export default function ExpensesView({
     <div className="space-y-4">
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
+
+      <Card>
+        <SectionTitle
+          title="Cuadro de gastos"
+          subtitle={`Total del período: ${formatClp(total)}`}
+          action={
+            <PeriodFilter
+              from={from}
+              to={to}
+              onChange={(nextFrom, nextTo) => {
+                setFrom(nextFrom);
+                setTo(nextTo);
+              }}
+            />
+          }
+        />
+        {byCategory.length === 0 ? (
+          <p className="py-4 text-sm text-slate-500">Sin gastos en el período.</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {byCategory.map(([categoryName, categoryTotal]) => (
+              <div
+                key={categoryName}
+                className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2"
+              >
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                  {categoryName}
+                </p>
+                <p className="mt-1 text-lg font-bold text-white">
+                  {formatClp(categoryTotal)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
         <Card>
@@ -159,8 +207,8 @@ export default function ExpensesView({
 
         <Card>
           <SectionTitle
-            title="Gastos del día"
-            subtitle={`Total: ${formatClp(total)}`}
+            title="Detalle de gastos"
+            subtitle={`Período ${formatDate(from)} — ${formatDate(to)}`}
             action={<Receipt className="h-5 w-5 text-slate-500" />}
           />
           {expenses.length === 0 ? (

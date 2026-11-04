@@ -233,6 +233,7 @@ export default function AccountsView({
               <option value="CLIENTE">Cliente</option>
               <option value="PROVEEDOR">Proveedor</option>
               <option value="EMPRESA">Empresa</option>
+              <option value="BANCO">Banco / cuenta bancaria</option>
             </Select>
             <Button
               variant="secondary"
