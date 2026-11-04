@@ -79,6 +79,7 @@ try {
     'supabase/migrations/202611040003_fx_rpc.sql',
   ]);
   await validate('consolidado', ['supabase/apply_all.sql']);
+  await validate('ascii', ['supabase/apply_all_ascii.sql']);
 } catch (error) {
   console.error('FALLO:', error.message);
   process.exitCode = 1;

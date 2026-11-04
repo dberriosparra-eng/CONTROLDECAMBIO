@@ -144,7 +144,7 @@ export default function App() {
                   El usuario existe y el login funciona, pero la base todavía no tiene
                   las tablas del sistema. Ejecuta el archivo{' '}
                   <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-indigo-200">
-                    supabase/apply_all.sql
+                    supabase/apply_all_ascii.sql
                   </code>{' '}
                   completo en el SQL Editor de Supabase y vuelve a cargar esta página.
                 </p>

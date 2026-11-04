@@ -57,11 +57,20 @@ supabase/migrations/202611040003_fx_rpc.sql
 
 Aplícalas **en ese orden**. La primera crea tablas, vistas y RLS; la segunda crea las funciones transaccionales.
 
-Para pegar en el SQL Editor de Supabase hay un archivo consolidado:
+Para pegar en el SQL Editor de Supabase hay dos archivos consolidados:
 
 ```text
-supabase/apply_all.sql
+supabase/apply_all.sql        # UTF-8, conserva acentos
+supabase/apply_all_ascii.sql  # 100% ASCII, recomendado si hay problemas de codificación
 ```
+
+Si tu editor o terminal muestra caracteres raros, usa `apply_all_ascii.sql`. Para copiarlo directo al portapapeles desde PowerShell:
+
+```powershell
+Get-Content "supabase\apply_all_ascii.sql" -Raw | Set-Clipboard
+```
+
+Luego pégalo en el SQL Editor de Supabase y ejecútalo. **No ejecutes el `.sql` directamente en PowerShell**: eso solo imprime el texto, no lo aplica a Supabase.
 
 Incluye:
 
