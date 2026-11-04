@@ -18,10 +18,12 @@ import {
   listAccountBalances,
   listCashCounts,
   listClosures,
+  listExpenses,
   listOperations,
   type AccountBalanceRow,
   type CashCountRow,
   type ClosureRow,
+  type ExpenseRow,
   type FxSession,
   type OperationRow,
   type SessionSummaryRow,
@@ -41,6 +43,7 @@ export default function CloseView({
   const [operations, setOperations] = useState<OperationRow[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceRow[]>([]);
   const [counts, setCounts] = useState<CashCountRow[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [closures, setClosures] = useState<ClosureRow[]>([]);
   const [margin, setMargin] = useState(0);
   const [notes, setNotes] = useState('');
@@ -53,19 +56,28 @@ export default function CloseView({
     setLoading(true);
     setError(null);
     try {
-      const [summaryRows, operationRows, accountRows, countRows, closureRows, marginValue] =
-        await Promise.all([
-          getSessionSummary(session.id),
-          listOperations(session.id),
-          listAccountBalances(storeId),
-          listCashCounts(session.id),
-          listClosures(storeId),
-          getSessionMargin(session.id),
-        ]);
+      const [
+        summaryRows,
+        operationRows,
+        accountRows,
+        countRows,
+        expenseRows,
+        closureRows,
+        marginValue,
+      ] = await Promise.all([
+        getSessionSummary(session.id),
+        listOperations(session.id),
+        listAccountBalances(storeId),
+        listCashCounts(session.id),
+        listExpenses(session.id),
+        listClosures(storeId),
+        getSessionMargin(session.id),
+      ]);
       setSummary(summaryRows);
       setOperations(operationRows);
       setAccounts(accountRows);
       setCounts(countRows);
+      setExpenses(expenseRows);
       setClosures(closureRows);
       setMargin(marginValue);
     } catch (caught) {
@@ -85,14 +97,19 @@ export default function CloseView({
     const inventoryClp = summary
       .filter((row) => row.currency_code !== 'CLP')
       .reduce((total, row) => total + row.current_fifo_value_clp, 0);
+    const expensesClp = expenses.reduce(
+      (total, row) => total + Number(row.amount_clp || 0),
+      0,
+    );
     return {
       cashClp,
       inventoryClp,
       capitalClp: cashClp + inventoryClp,
       margin,
-      net: margin,
+      expensesClp,
+      net: margin - expensesClp,
     };
-  }, [summary, margin]);
+  }, [summary, margin, expenses]);
 
   const countByCurrency = useMemo(() => {
     const map = new Map<string, number>();
@@ -177,9 +194,18 @@ export default function CloseView({
         </Card>
         <Card className="p-4">
           <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
-            Margen realizado
+            Resultado neto
           </p>
-          <p className="mt-1 text-xl font-bold text-emerald-300">{formatClp(totals.margin)}</p>
+          <p
+            className={`mt-1 text-xl font-bold ${
+              totals.net >= 0 ? 'text-emerald-300' : 'text-rose-300'
+            }`}
+          >
+            {formatClp(totals.net)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Margen {formatClp(totals.margin)} − gastos {formatClp(totals.expensesClp)}
+          </p>
         </Card>
       </div>
 
@@ -241,6 +267,33 @@ export default function CloseView({
             </tbody>
           </table>
         </div>
+      </Card>
+
+      <Card>
+        <SectionTitle
+          title="2.b Gastos del día"
+          subtitle={`Total gastos: ${formatClp(totals.expensesClp)}`}
+        />
+        {expenses.length === 0 ? (
+          <EmptyState title="Sin gastos registrados" />
+        ) : (
+          <div className="space-y-2">
+            {expenses.map((expense) => (
+              <div
+                key={expense.id}
+                className="flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2"
+              >
+                <div>
+                  <p className="text-sm text-slate-200">{expense.concept}</p>
+                  <p className="text-[11px] text-slate-500">{expense.category}</p>
+                </div>
+                <p className="text-sm font-semibold text-rose-300">
+                  {formatClp(expense.amount_clp)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card>

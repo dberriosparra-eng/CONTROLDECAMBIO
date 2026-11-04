@@ -34,6 +34,18 @@ npm run dev
 
 Abre la URL que muestra Vite (por defecto `http://localhost:5173`).
 
+## Validación
+
+```bash
+npm test              # reglas puras del dominio
+npm run validate:sql  # ejecuta las migraciones en PGlite
+npm run validate:flow # flujo completo: apertura, importación, ST, FIFO, cuentas, conteo y cierre
+npm run validate      # todo lo anterior
+npm run build         # TypeScript + build de producción
+```
+
+La validación SQL usa `@electric-sql/pglite` con stubs de `auth.users`, `auth.uid()` y roles de Supabase. No reemplaza una prueba contra el proyecto real, pero detecta errores de sintaxis y de lógica transaccional antes de aplicar la migración.
+
 ## Base de datos
 
 Las migraciones están en:

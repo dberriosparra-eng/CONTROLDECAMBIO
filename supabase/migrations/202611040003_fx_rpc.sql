@@ -172,9 +172,9 @@ BEGIN
     v_clp := ROUND(v_qty * v_cost, 2);
 
     INSERT INTO public.fx_opening_balances (
-      session_id, currency_code, quantity, unit_cost_clp, clp_value, source
+      store_id, session_id, currency_code, quantity, unit_cost_clp, clp_value, source
     ) VALUES (
-      p_session_id, v_currency, v_qty, v_cost, v_clp, 'MANUAL'
+      p_store_id, p_session_id, v_currency, v_qty, v_cost, v_clp, 'MANUAL'
     );
 
     -- El CLP no usa capas FIFO. Para las divisas, la apertura debe coincidir
@@ -193,12 +193,13 @@ BEGIN
         ) VALUES (
           p_store_id, v_currency, p_session_id,
           CASE WHEN v_existing_qty = 0 THEN 'OPENING' ELSE 'ADJUSTMENT' END,
-          v_session.opened_at, v_qty - v_existing_qty, v_qty - v_existing_qty,
+          v_session.business_date::timestamp, v_qty - v_existing_qty, v_qty - v_existing_qty,
           v_cost, 'Apertura'
         );
       ELSIF v_qty < v_existing_qty - 0.000001 THEN
         PERFORM * FROM public.fx_consume_fifo(
-          p_store_id, v_currency, v_existing_qty - v_qty, NULL, NULL, v_session.opened_at
+          p_store_id, v_currency, v_existing_qty - v_qty, NULL, NULL,
+          v_session.business_date::timestamp
         );
       END IF;
     END IF;
@@ -669,7 +670,77 @@ REVOKE ALL ON FUNCTION public.fx_save_cash_counts(uuid, uuid, jsonb) FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.fx_save_cash_counts(uuid, uuid, jsonb) TO authenticated;
 
 -- ----------------------------------------------------------------------------
--- 06. Cierre
+-- 06. Gastos
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.fx_register_expense(
+  p_store_id uuid,
+  p_session_id uuid,
+  p_business_date date,
+  p_concept text,
+  p_category text,
+  p_amount_clp numeric,
+  p_note text DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_session public.fx_sessions;
+  v_expense_id uuid;
+BEGIN
+  IF NOT public.is_store_member(p_store_id) THEN
+    RAISE EXCEPTION 'Usuario sin acceso a esta tienda';
+  END IF;
+  IF p_amount_clp IS NULL OR p_amount_clp < 0 THEN
+    RAISE EXCEPTION 'El monto del gasto debe ser mayor o igual a 0';
+  END IF;
+  IF length(btrim(COALESCE(p_concept, ''))) = 0 THEN
+    RAISE EXCEPTION 'El concepto del gasto es obligatorio';
+  END IF;
+
+  SELECT * INTO v_session
+  FROM public.fx_sessions
+  WHERE id = p_session_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Sesión no encontrada';
+  END IF;
+  IF v_session.status <> 'OPEN' THEN
+    RAISE EXCEPTION 'La sesión no está abierta';
+  END IF;
+
+  INSERT INTO public.fx_expenses (
+    store_id, session_id, business_date, concept, category,
+    amount_clp, currency_code, amount_currency, fx_rate, note, created_by
+  ) VALUES (
+    p_store_id, p_session_id, p_business_date, btrim(p_concept),
+    COALESCE(NULLIF(btrim(p_category), ''), 'OTROS'),
+    p_amount_clp, 'CLP', p_amount_clp, 1, p_note, auth.uid()
+  ) RETURNING id INTO v_expense_id;
+
+  INSERT INTO public.fx_inventory_movements (
+    store_id, session_id, currency_code, movement_type,
+    quantity_delta, unit_cost_clp, clp_delta, reference_type, reference_id,
+    business_date, note
+  ) VALUES (
+    p_store_id, p_session_id, 'CLP', 'EXPENSE',
+    -p_amount_clp, 1, -p_amount_clp, 'EXPENSE', v_expense_id,
+    p_business_date, p_concept
+  );
+
+  RETURN v_expense_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.fx_register_expense(uuid, uuid, date, text, text, numeric, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fx_register_expense(uuid, uuid, date, text, text, numeric, text) TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 07. Cierre
 -- ----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.fx_close_session(

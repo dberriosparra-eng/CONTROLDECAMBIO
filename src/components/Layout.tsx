@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Receipt,
   Settings2,
   Users,
   Wallet,
@@ -24,6 +25,7 @@ export type TabKey =
   | 'import'
   | 'operations'
   | 'accounts'
+  | 'expenses'
   | 'cashcount'
   | 'close'
   | 'history'
@@ -48,6 +50,7 @@ const NAV: Array<{
     label: 'Gestión',
     items: [
       { id: 'accounts', label: 'Cuentas corrientes', icon: Users },
+      { id: 'expenses', label: 'Gastos', icon: Receipt },
       { id: 'history', label: 'Histórico', icon: BarChart3 },
       { id: 'settings', label: 'Configuración', icon: Settings2 },
     ],
@@ -60,6 +63,7 @@ const LABELS: Record<TabKey, string> = {
   import: 'Importar reporte',
   operations: 'Operaciones del día',
   accounts: 'Cuentas corrientes',
+  expenses: 'Gastos del día',
   cashcount: 'Cuadratura',
   close: 'Cierre del día',
   history: 'Histórico',

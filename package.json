@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node --test \"tests/**/*.test.mts\""
+    "test": "node --test \"tests/**/*.test.mts\"",
+    "validate:sql": "node scripts/validate-sql.mjs",
+    "validate:flow": "node scripts/validate-flow.mjs",
+    "validate": "npm test && npm run validate:sql && npm run validate:flow"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
@@ -17,6 +20,7 @@
     "read-excel-file": "^9.3.14"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^26.6.6",
     "@types/react": "^19.0.0",

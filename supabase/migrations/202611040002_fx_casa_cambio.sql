@@ -269,6 +269,7 @@ CREATE INDEX IF NOT EXISTS fx_sessions_store_date_idx
   ON public.fx_sessions (store_id, business_date DESC);
 
 CREATE TABLE IF NOT EXISTS public.fx_opening_balances (
+  store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
   session_id uuid NOT NULL REFERENCES public.fx_sessions(id) ON DELETE CASCADE,
   currency_code text NOT NULL REFERENCES public.fx_currencies(code) ON DELETE RESTRICT,
   quantity numeric(24,6) NOT NULL DEFAULT 0 CHECK (quantity >= 0),

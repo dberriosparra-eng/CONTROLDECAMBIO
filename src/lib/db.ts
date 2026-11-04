@@ -120,6 +120,16 @@ export type DailyStatRow = {
   sell_count: number;
 };
 
+export type ExpenseRow = {
+  id: string;
+  business_date: string;
+  concept: string;
+  category: string;
+  amount_clp: number;
+  note: string | null;
+  created_at: string;
+};
+
 export type StFolio = {
   id: string;
   document_type: string;
@@ -491,6 +501,37 @@ export async function getSessionMargin(sessionId: string): Promise<number> {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return Number((data as { realized_margin_clp?: number } | null)?.realized_margin_clp ?? 0);
+}
+
+export async function listExpenses(sessionId: string): Promise<ExpenseRow[]> {
+  const { data, error } = await supabase
+    .from('fx_expenses')
+    .select('id, business_date, concept, category, amount_clp, note, created_at')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: false });
+  return unwrap(data as ExpenseRow[] | null, error);
+}
+
+export async function registerExpense(input: {
+  storeId: string;
+  sessionId: string;
+  businessDate: string;
+  concept: string;
+  category: string;
+  amountClp: number;
+  note: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('fx_register_expense', {
+    p_store_id: input.storeId,
+    p_session_id: input.sessionId,
+    p_business_date: input.businessDate,
+    p_concept: input.concept,
+    p_category: input.category,
+    p_amount_clp: input.amountClp,
+    p_note: input.note,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
 }
 
 export async function listDailyStats(

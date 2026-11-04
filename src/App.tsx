@@ -16,6 +16,7 @@ import OpeningView from './views/OpeningView';
 import ImportView from './views/ImportView';
 import OperationsView from './views/OperationsView';
 import AccountsView from './views/AccountsView';
+import ExpensesView from './views/ExpensesView';
 import CashCountView from './views/CashCountView';
 import CloseView from './views/CloseView';
 import HistoryView from './views/HistoryView';
@@ -162,6 +163,8 @@ export default function App() {
         return <OperationsView storeId={storeId} session={fxSession} onChanged={refresh} />;
       case 'accounts':
         return <AccountsView storeId={storeId} session={fxSession} onChanged={refresh} />;
+      case 'expenses':
+        return <ExpensesView storeId={storeId} session={fxSession} onChanged={refresh} />;
       case 'cashcount':
         return <CashCountView storeId={storeId} session={fxSession} onSaved={refresh} />;
       case 'close':
