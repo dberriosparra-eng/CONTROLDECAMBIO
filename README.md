@@ -127,8 +127,8 @@ tests/               Pruebas del dominio
 
 ## Flujo operativo
 
-1. **Apertura:** elegir fecha, cargar saldos iniciales por divisa y costo unitario. Se crean las capas FIFO de apertura.
-2. **Importar reporte:** subir `.xlsx`, revisar la vista previa, ingresar folios ST y confirmar. Las boletas ST quedan registradas pero no suman.
+1. **Apertura:** elegir fecha y cargar solo las cantidades por divisa. El costo se calcula desde las capas FIFO (las compras más recientes quedan en el remanente).
+2. **Importar reporte:** subir `.xlsx` o agregar boletas una por una. Se pueden eliminar líneas, se agrupan por día y por mes, y solo se usan boletas. Las nulas (ST) quedan registradas pero no suman.
 3. **Operaciones:** revisar compras/ventas y anular boletas nulas (ST).
 4. **Mayoristas:** pactar una divisa a precio fijo y registrar entregas/pagos parciales; pueden quedar saldos por ambas partes.
 5. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa. Los bancos se crean como contraparte `BANCO`.

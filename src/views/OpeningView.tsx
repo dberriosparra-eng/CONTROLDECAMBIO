@@ -220,7 +220,7 @@ export default function OpeningView({
               <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-slate-500">
                 <th className="py-2 pr-3 font-semibold">Divisa</th>
                 <th className="px-3 py-2 text-right font-semibold">Cantidad</th>
-                <th className="px-3 py-2 text-right font-semibold">Costo unitario CLP</th>
+                <th className="px-3 py-2 text-right font-semibold">Costo promedio</th>
                 <th className="px-3 py-2 text-right font-semibold">Valor CLP</th>
                 <th className="px-3 py-2 text-right font-semibold">Cierre anterior</th>
               </tr>
@@ -255,20 +255,8 @@ export default function OpeningView({
                         className="text-right"
                       />
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        value={currency.code === 'CLP' ? 1 : row.unit_cost_clp}
-                        onChange={(event) =>
-                          updateRow(currency.code, {
-                            unit_cost_clp: Number(event.target.value),
-                          })
-                        }
-                        disabled={hasOperations || currency.code === 'CLP'}
-                        className="text-right"
-                      />
+                    <td className="px-3 py-2.5 text-right text-slate-400">
+                      {formatRate(currency.code === 'CLP' ? 1 : row.unit_cost_clp)}
                     </td>
                     <td className="px-3 py-2.5 text-right font-semibold text-white">
                       {formatClp(row.quantity * (currency.code === 'CLP' ? 1 : row.unit_cost_clp))}

@@ -1280,6 +1280,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_session public.fx_sessions;
+  v_previous public.fx_sessions;
 BEGIN
   IF NOT public.is_store_member(p_store_id) THEN
     RAISE EXCEPTION 'Usuario sin acceso a esta tienda';
@@ -1296,9 +1297,43 @@ BEGIN
     RETURN v_session;
   END IF;
 
+  SELECT * INTO v_previous
+  FROM public.fx_sessions
+  WHERE store_id = p_store_id AND business_date < p_business_date
+  ORDER BY business_date DESC
+  LIMIT 1;
+
   INSERT INTO public.fx_sessions (store_id, business_date, opening_mode, opened_by)
   VALUES (p_store_id, p_business_date, p_opening_mode, auth.uid())
   RETURNING * INTO v_session;
+
+  -- Arrastra el cierre anterior como apertura del nuevo dÃ­a. Las capas FIFO
+  -- son globales y no se duplican; solo se copia el saldo esperado.
+  IF v_previous.id IS NOT NULL THEN
+    INSERT INTO public.fx_opening_balances (
+      store_id, session_id, currency_code, quantity,
+      unit_cost_clp, clp_value, source
+    )
+    SELECT
+      p_store_id,
+      v_session.id,
+      s.currency_code,
+      s.expected_qty,
+      CASE
+        WHEN s.currency_code = 'CLP' THEN 1
+        WHEN s.expected_qty > 0 THEN s.current_fifo_value_clp / s.expected_qty
+        ELSE 0
+      END,
+      CASE
+        WHEN s.currency_code = 'CLP' THEN s.expected_qty
+        ELSE s.current_fifo_value_clp
+      END,
+      'PREVIOUS_CLOSE'
+    FROM public.fx_session_currency_summary s
+    WHERE s.session_id = v_previous.id
+      AND s.expected_qty <> 0
+    ON CONFLICT (session_id, currency_code) DO NOTHING;
+  END IF;
 
   RETURN v_session;
 END;
@@ -1329,6 +1364,10 @@ DECLARE
   v_cost numeric;
   v_clp numeric;
   v_existing_qty numeric;
+  v_existing_value numeric;
+  v_last_cost numeric;
+  v_add_qty numeric;
+  v_add_cost numeric;
 BEGIN
   IF NOT public.is_store_member(p_store_id) THEN
     RAISE EXCEPTION 'Usuario sin acceso a esta tienda';
@@ -1385,32 +1424,43 @@ BEGIN
       RAISE EXCEPTION 'Moneda no vÃ¡lida: %', v_currency;
     END IF;
 
-    v_clp := ROUND(v_qty * v_cost, 2);
-
-    INSERT INTO public.fx_opening_balances (
-      store_id, session_id, currency_code, quantity, unit_cost_clp, clp_value, source
-    ) VALUES (
-      p_store_id, p_session_id, v_currency, v_qty, v_cost, v_clp, 'MANUAL'
-    );
-
-    -- El CLP no usa capas FIFO. Para las divisas, la apertura debe coincidir
-    -- con las capas existentes; si no, se crea un ajuste o se consume FIFO.
-    IF v_currency <> 'CLP' THEN
-      SELECT COALESCE(SUM(remaining_qty), 0) INTO v_existing_qty
+    IF v_currency = 'CLP' THEN
+      v_cost := 1;
+      v_clp := ROUND(v_qty, 2);
+    ELSE
+      -- Ajustar las capas FIFO para que el remanente coincida con la cantidad.
+      SELECT
+        COALESCE(SUM(remaining_qty), 0),
+        COALESCE(SUM(remaining_qty * unit_cost_clp), 0)
+      INTO v_existing_qty, v_existing_value
       FROM public.fx_lots
       WHERE store_id = p_store_id
         AND currency_code = v_currency
         AND remaining_qty > 0;
 
       IF v_qty > v_existing_qty + 0.000001 THEN
+        SELECT unit_cost_clp INTO v_last_cost
+        FROM public.fx_lots
+        WHERE store_id = p_store_id
+          AND currency_code = v_currency
+          AND remaining_qty > 0
+        ORDER BY acquired_at DESC, lot_seq DESC
+        LIMIT 1;
+
+        v_add_qty := v_qty - v_existing_qty;
+        v_add_cost := CASE
+          WHEN v_existing_qty > 0 THEN COALESCE(v_last_cost, v_cost)
+          ELSE v_cost
+        END;
+
         INSERT INTO public.fx_lots (
           store_id, currency_code, session_id, source_type,
           acquired_at, original_qty, remaining_qty, unit_cost_clp, note
         ) VALUES (
           p_store_id, v_currency, p_session_id,
           CASE WHEN v_existing_qty = 0 THEN 'OPENING' ELSE 'ADJUSTMENT' END,
-          v_session.business_date::timestamp, v_qty - v_existing_qty, v_qty - v_existing_qty,
-          v_cost, 'Apertura'
+          v_session.business_date::timestamp, v_add_qty, v_add_qty,
+          v_add_cost, 'Apertura'
         );
       ELSIF v_qty < v_existing_qty - 0.000001 THEN
         PERFORM * FROM public.fx_consume_fifo(
@@ -1418,7 +1468,30 @@ BEGIN
           v_session.business_date::timestamp
         );
       END IF;
+
+      -- El costo del saldo inicial sale del remanente FIFO: como se consumen
+      -- primero las compras antiguas, quedan las compras mÃ¡s recientes.
+      SELECT
+        COALESCE(SUM(remaining_qty), 0),
+        COALESCE(SUM(remaining_qty * unit_cost_clp), 0)
+      INTO v_existing_qty, v_existing_value
+      FROM public.fx_lots
+      WHERE store_id = p_store_id
+        AND currency_code = v_currency
+        AND remaining_qty > 0;
+
+      v_cost := CASE
+        WHEN v_existing_qty > 0 THEN v_existing_value / v_existing_qty
+        ELSE 0
+      END;
+      v_clp := ROUND(v_existing_value, 2);
     END IF;
+
+    INSERT INTO public.fx_opening_balances (
+      store_id, session_id, currency_code, quantity, unit_cost_clp, clp_value, source
+    ) VALUES (
+      p_store_id, p_session_id, v_currency, v_qty, v_cost, v_clp, 'MANUAL'
+    );
   END LOOP;
 END;
 $$;
