@@ -617,7 +617,9 @@ CREATE TABLE IF NOT EXISTS public.fx_wholesale_settlements (
 CREATE INDEX IF NOT EXISTS fx_wholesale_settlements_deal_idx
   ON public.fx_wholesale_settlements (deal_id, business_date);
 
-CREATE OR REPLACE VIEW public.fx_wholesale_deals_status AS
+CREATE OR REPLACE VIEW public.fx_wholesale_deals_status
+WITH (security_invoker = true)
+AS
 SELECT
   d.id,
   d.store_id,
@@ -735,7 +737,9 @@ CREATE INDEX IF NOT EXISTS fx_expenses_session_idx
 -- ----------------------------------------------------------------------------
 
 -- Ãšnica fuente vÃ¡lida para compras/ventas: excluye cualquier documento anulado.
-CREATE OR REPLACE VIEW public.fx_valid_operations AS
+CREATE OR REPLACE VIEW public.fx_valid_operations
+WITH (security_invoker = true)
+AS
 SELECT
   o.id,
   o.store_id,
@@ -761,7 +765,9 @@ FROM public.fx_operations o
 JOIN public.fx_documents d ON d.id = o.document_id
 WHERE d.status = 'VALID';
 
-CREATE OR REPLACE VIEW public.fx_daily_currency_stats AS
+CREATE OR REPLACE VIEW public.fx_daily_currency_stats
+WITH (security_invoker = true)
+AS
 SELECT
   store_id,
   business_date,
@@ -790,7 +796,9 @@ GROUP BY store_id, business_date, currency_code, instrument;
 
 -- Saldo esperado por sesiÃ³n: apertura + movimientos de esa sesiÃ³n.
 -- No sumar movimientos de todas las sesiones: cada apertura ya reinicia el dÃ­a.
-CREATE OR REPLACE VIEW public.fx_session_inventory_balance AS
+CREATE OR REPLACE VIEW public.fx_session_inventory_balance
+WITH (security_invoker = true)
+AS
 SELECT
   s.id AS session_id,
   s.store_id,
@@ -810,7 +818,9 @@ WHERE c.is_active;
 
 -- ValorizaciÃ³n FIFO actual de las divisas (sin CLP; el CLP se toma del saldo
 -- esperado de la sesiÃ³n). Las capas persisten entre sesiones.
-CREATE OR REPLACE VIEW public.fx_inventory_valuation AS
+CREATE OR REPLACE VIEW public.fx_inventory_valuation
+WITH (security_invoker = true)
+AS
 SELECT
   store_id,
   currency_code,
@@ -820,7 +830,9 @@ FROM public.fx_lots
 WHERE remaining_qty > 0
 GROUP BY store_id, currency_code;
 
-CREATE OR REPLACE VIEW public.fx_wholesale_margin AS
+CREATE OR REPLACE VIEW public.fx_wholesale_margin
+WITH (security_invoker = true)
+AS
 SELECT
   d.store_id,
   d.session_id,
@@ -842,7 +854,9 @@ LEFT JOIN (
 ) c ON c.account_movement_id = s.account_movement_id
 GROUP BY d.store_id, d.session_id, d.id;
 
-CREATE OR REPLACE VIEW public.fx_session_margin AS
+CREATE OR REPLACE VIEW public.fx_session_margin
+WITH (security_invoker = true)
+AS
 SELECT
   store_id,
   session_id,
@@ -869,7 +883,9 @@ FROM (
 ) margins
 GROUP BY store_id, session_id;
 
-CREATE OR REPLACE VIEW public.fx_account_balances AS
+CREATE OR REPLACE VIEW public.fx_account_balances
+WITH (security_invoker = true)
+AS
 SELECT
   l.store_id,
   m.counterparty_id,
@@ -882,7 +898,9 @@ JOIN public.fx_account_movements m ON m.id = l.movement_id
 WHERE m.status = 'ACTIVE'
 GROUP BY l.store_id, m.counterparty_id, l.currency_code;
 
-CREATE OR REPLACE VIEW public.fx_session_currency_summary AS
+CREATE OR REPLACE VIEW public.fx_session_currency_summary
+WITH (security_invoker = true)
+AS
 SELECT
   s.id AS session_id,
   s.store_id,

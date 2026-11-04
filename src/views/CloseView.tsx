@@ -120,6 +120,9 @@ export default function CloseView({
   }, [counts]);
 
   const currentClosure = closures.find((row) => row.session_id === session.id) ?? null;
+  const closeDeals = wholesaleDeals.filter(
+    (deal) => deal.session_id === session.id || deal.status !== 'CERRADO',
+  );
 
   async function handleClose() {
     setWorking(true);
@@ -301,7 +304,7 @@ export default function CloseView({
           title="3. Cierres mayoristas"
           subtitle="Precio pactado con proveedores/clientes, entregas y pagos parciales."
         />
-        {wholesaleDeals.length === 0 ? (
+        {closeDeals.length === 0 ? (
           <EmptyState
             title="Sin cierres mayoristas"
             description="No hay cierres pactados registrados."
@@ -322,7 +325,7 @@ export default function CloseView({
                 </tr>
               </thead>
               <tbody>
-                {wholesaleDeals.map((deal) => (
+                {closeDeals.map((deal) => (
                   <tr key={deal.id} className="border-b border-white/[0.04]">
                     <td className="py-2 pr-3 text-slate-200">{deal.counterparty_name}</td>
                     <td className="px-3 py-2">
