@@ -708,6 +708,20 @@ CREATE TABLE IF NOT EXISTS public.fx_closures (
 CREATE INDEX IF NOT EXISTS fx_closures_store_date_idx
   ON public.fx_closures (store_id, business_date DESC);
 
+CREATE TABLE IF NOT EXISTS public.fx_expense_categories (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 80),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS fx_expense_categories_store_name_idx
+  ON public.fx_expense_categories (store_id, lower(btrim(name)));
+
+CREATE INDEX IF NOT EXISTS fx_expense_categories_store_idx
+  ON public.fx_expense_categories (store_id, lower(name));
+
 CREATE TABLE IF NOT EXISTS public.fx_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
@@ -877,6 +891,66 @@ FROM (
   FROM public.fx_wholesale_margin
 ) margins
 GROUP BY store_id, session_id;
+
+CREATE OR REPLACE VIEW public.fx_session_currency_margin
+WITH (security_invoker = true)
+AS
+WITH regular AS (
+  SELECT
+    o.store_id,
+    o.session_id,
+    o.currency_code,
+    SUM(o.clp_amount) AS sales_clp,
+    SUM(COALESCE(c.cost, 0)) AS cost_clp,
+    SUM(o.clp_amount - COALESCE(c.cost, 0)) AS margin_clp
+  FROM public.fx_valid_operations o
+  LEFT JOIN (
+    SELECT operation_id, SUM(total_cost_clp) AS cost
+    FROM public.fx_lot_consumptions
+    WHERE reversed_at IS NULL
+    GROUP BY operation_id
+  ) c ON c.operation_id = o.id
+  WHERE o.operation = 'VENTA'
+  GROUP BY o.store_id, o.session_id, o.currency_code
+),
+wholesale AS (
+  SELECT
+    d.store_id,
+    d.session_id,
+    d.currency_code,
+    SUM(s.clp_amount) AS sales_clp,
+    SUM(COALESCE(c.cost, 0)) AS cost_clp,
+    SUM(s.clp_amount - COALESCE(c.cost, 0)) AS margin_clp
+  FROM public.fx_wholesale_deals d
+  JOIN public.fx_wholesale_settlements s
+    ON s.deal_id = d.id
+   AND s.settlement_type = 'ENTREGA_DIVISA'
+   AND d.deal_type = 'VENTA'
+  LEFT JOIN (
+    SELECT account_movement_id, SUM(total_cost_clp) AS cost
+    FROM public.fx_lot_consumptions
+    WHERE reversed_at IS NULL AND account_movement_id IS NOT NULL
+    GROUP BY account_movement_id
+  ) c ON c.account_movement_id = s.account_movement_id
+  GROUP BY d.store_id, d.session_id, d.currency_code
+)
+SELECT
+  store_id,
+  session_id,
+  currency_code,
+  SUM(sales_clp) AS sales_clp,
+  SUM(cost_clp) AS cost_clp,
+  SUM(margin_clp) AS margin_clp,
+  CASE
+    WHEN SUM(sales_clp) > 0 THEN SUM(margin_clp) / SUM(sales_clp) * 100
+    ELSE 0
+  END AS margin_pct
+FROM (
+  SELECT * FROM regular
+  UNION ALL
+  SELECT * FROM wholesale
+) margins
+GROUP BY store_id, session_id, currency_code;
 
 CREATE OR REPLACE VIEW public.fx_account_balances
 WITH (security_invoker = true)
@@ -1105,7 +1179,8 @@ DECLARE
     'fx_st_folios', 'fx_lots', 'fx_lot_consumptions',
     'fx_inventory_movements', 'fx_account_movements', 'fx_account_lines',
     'fx_wholesale_deals', 'fx_wholesale_settlements',
-    'fx_cash_counts', 'fx_closures', 'fx_expenses'
+    'fx_cash_counts', 'fx_closures', 'fx_expenses',
+    'fx_expense_categories'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1137,7 +1212,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.fx_wholesale_settlements,
   public.fx_cash_counts,
   public.fx_closures,
-  public.fx_expenses
+  public.fx_expenses,
+  public.fx_expense_categories
 TO authenticated;
 
 GRANT SELECT ON
@@ -1150,6 +1226,7 @@ GRANT SELECT ON
   public.fx_inventory_valuation,
   public.fx_session_margin,
   public.fx_wholesale_margin,
+  public.fx_session_currency_margin,
   public.fx_account_balances,
   public.fx_wholesale_deals_status,
   public.fx_session_currency_summary

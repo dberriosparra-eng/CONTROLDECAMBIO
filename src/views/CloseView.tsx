@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Printer } from 'lucide-react';
+import { CheckCircle2, FileDown, Printer } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -18,24 +18,29 @@ import {
   listAccountBalances,
   listCashCounts,
   listClosures,
+  listCurrencyMargins,
   listExpenses,
   listWholesaleDeals,
   type AccountBalanceRow,
   type CashCountRow,
   type ClosureRow,
+  type CurrencyMarginRow,
   type ExpenseRow,
   type FxSession,
   type SessionSummaryRow,
   type WholesaleDealRow,
 } from '../lib/db';
+import { currencyFlag } from '../lib/currencies';
 import { errorMessage, formatClp, formatDate, formatQty, formatRate } from '../lib/format';
 
 export default function CloseView({
   storeId,
+  storeName,
   session,
   onClosed,
 }: {
   storeId: string;
+  storeName: string;
   session: FxSession;
   onClosed: () => void;
 }) {
@@ -44,6 +49,7 @@ export default function CloseView({
   const [counts, setCounts] = useState<CashCountRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [wholesaleDeals, setWholesaleDeals] = useState<WholesaleDealRow[]>([]);
+  const [margins, setMargins] = useState<CurrencyMarginRow[]>([]);
   const [closures, setClosures] = useState<ClosureRow[]>([]);
   const [margin, setMargin] = useState(0);
   const [notes, setNotes] = useState('');
@@ -62,6 +68,7 @@ export default function CloseView({
         countRows,
         expenseRows,
         wholesaleRows,
+        marginRows,
         closureRows,
         marginValue,
       ] = await Promise.all([
@@ -70,6 +77,7 @@ export default function CloseView({
         listCashCounts(session.id),
         listExpenses(session.id),
         listWholesaleDeals(storeId),
+        listCurrencyMargins(session.id),
         listClosures(storeId),
         getSessionMargin(session.id),
       ]);
@@ -78,6 +86,7 @@ export default function CloseView({
       setCounts(countRows);
       setExpenses(expenseRows);
       setWholesaleDeals(wholesaleRows);
+      setMargins(marginRows);
       setClosures(closureRows);
       setMargin(marginValue);
     } catch (caught) {
@@ -124,6 +133,41 @@ export default function CloseView({
     (deal) => deal.session_id === session.id || deal.status !== 'CERRADO',
   );
 
+  const visibleSummary = summary.filter(
+    (row) =>
+      row.expected_qty !== 0 ||
+      row.opening_qty !== 0 ||
+      row.buy_qty !== 0 ||
+      row.sell_qty !== 0 ||
+      (countByCurrency.get(row.currency_code) ?? 0) !== 0,
+  );
+
+  const visibleMargins = margins.filter(
+    (row) => row.sales_clp !== 0 || row.margin_clp !== 0,
+  );
+
+  async function handlePdf() {
+    const { generateClosePdf } = await import('../lib/close-pdf');
+    generateClosePdf({
+      storeName,
+      businessDate: session.business_date,
+      summary: visibleSummary,
+      margins: visibleMargins,
+      expenses,
+      accounts,
+      wholesale: closeDeals,
+      counts,
+      totals: {
+        cashClp: totals.cashClp,
+        inventoryClp: totals.inventoryClp,
+        capitalClp: totals.capitalClp,
+        marginClp: totals.margin,
+        expensesClp: totals.expensesClp,
+        netResultClp: totals.net,
+      },
+    });
+  }
+
   async function handleClose() {
     setWorking(true);
     setError(null);
@@ -156,7 +200,10 @@ export default function CloseView({
             Reporte jerárquico de caja, inventario FIFO, cuentas y conteo físico.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={handlePdf}>
+            <FileDown className="h-4 w-4" /> PDF
+          </Button>
           <Button variant="secondary" onClick={() => window.print()}>
             <Printer className="h-4 w-4" /> Imprimir
           </Button>
@@ -224,7 +271,7 @@ export default function CloseView({
               </tr>
             </thead>
             <tbody>
-              {summary.map((row) => (
+              {visibleSummary.map((row) => (
                 <tr key={row.currency_code} className="border-b border-white/[0.04]">
                   <td className="py-2 pr-3 font-semibold text-slate-200">{row.currency_code}</td>
                   <td className="px-3 py-2 text-right text-slate-300">
@@ -255,7 +302,7 @@ export default function CloseView({
               </tr>
             </thead>
             <tbody>
-              {summary.map((row) => (
+              {visibleSummary.map((row) => (
                 <tr key={row.currency_code} className="border-b border-white/[0.04]">
                   <td className="py-2 pr-3 font-semibold text-slate-200">{row.currency_code}</td>
                   <td className="px-3 py-2 text-right text-emerald-300">{formatQty(row.buy_qty)}</td>
@@ -301,7 +348,94 @@ export default function CloseView({
 
       <Card>
         <SectionTitle
-          title="3. Cierres mayoristas"
+          title="3. Rentabilidad por divisa (antes de gastos)"
+          subtitle="Margen bruto de cada divisa. Los gastos se descuentan después para obtener el resultado final."
+        />
+        {visibleMargins.length === 0 ? (
+          <EmptyState
+            title="Sin ventas en la sesión"
+            description="No hay margen realizado por divisa."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-slate-500">
+                  <th className="py-2 pr-3 font-semibold">Divisa</th>
+                  <th className="px-3 py-2 text-right font-semibold">Ventas CLP</th>
+                  <th className="px-3 py-2 text-right font-semibold">Costo FIFO</th>
+                  <th className="px-3 py-2 text-right font-semibold">Margen</th>
+                  <th className="px-3 py-2 text-right font-semibold">Margen %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleMargins.map((row) => (
+                  <tr key={row.currency_code} className="border-b border-white/[0.04]">
+                    <td className="py-2 pr-3 font-semibold text-slate-200">
+                      {currencyFlag(row.currency_code)} {row.currency_code}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {formatClp(row.sales_clp)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-400">
+                      {formatClp(row.cost_clp)}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right font-semibold ${
+                        row.margin_clp >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                      }`}
+                    >
+                      {formatClp(row.margin_clp)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {Number(row.margin_pct || 0).toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-white/10">
+                  <td className="py-2 pr-3 font-semibold text-white">Total margen bruto</td>
+                  <td colSpan={2} />
+                  <td className="px-3 py-2 text-right font-bold text-emerald-300">
+                    {formatClp(totals.margin)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            Margen bruto antes de gastos
+          </p>
+          <p className="mt-1 text-xl font-bold text-emerald-300">{formatClp(totals.margin)}</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Gastos</p>
+          <p className="mt-1 text-xl font-bold text-rose-300">{formatClp(totals.expensesClp)}</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            Resultado final
+          </p>
+          <p
+            className={`mt-1 text-xl font-bold ${
+              totals.net >= 0 ? 'text-emerald-300' : 'text-rose-300'
+            }`}
+          >
+            {formatClp(totals.net)}
+          </p>
+        </Card>
+      </div>
+
+      <Card>
+        <SectionTitle
+          title="4. Cierres mayoristas"
           subtitle="Precio pactado con proveedores/clientes, entregas y pagos parciales."
         />
         {closeDeals.length === 0 ? (
@@ -370,7 +504,7 @@ export default function CloseView({
       </Card>
 
       <Card>
-        <SectionTitle title="4. Deudores y acreedores" />
+        <SectionTitle title="5. Deudores y acreedores" />
         {accounts.length === 0 ? (
           <EmptyState title="Sin saldos de cuentas corrientes" />
         ) : (
@@ -411,7 +545,7 @@ export default function CloseView({
       </Card>
 
       <Card>
-        <SectionTitle title="5. Conteo físico y diferencias" />
+        <SectionTitle title="6. Conteo físico y diferencias" />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead>
@@ -423,7 +557,7 @@ export default function CloseView({
               </tr>
             </thead>
             <tbody>
-              {summary.map((row) => {
+              {visibleSummary.map((row) => {
                 const counted = countByCurrency.get(row.currency_code) ?? 0;
                 const difference = counted - row.expected_qty;
                 return (
@@ -450,7 +584,7 @@ export default function CloseView({
 
       <Card>
         <SectionTitle
-          title="6. Observaciones del cierre"
+          title="7. Observaciones del cierre"
           subtitle="La diferencia de cuadratura no bloquea el cierre, pero queda registrada."
         />
         <Input

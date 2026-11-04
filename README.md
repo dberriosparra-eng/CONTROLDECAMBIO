@@ -70,6 +70,14 @@ Si el esquema ya está aplicado y solo quieres agregar la función para sumar mo
 supabase/patch_world_currencies.sql
 ```
 
+Para la versión con **categorías de gastos personalizables** y **rentabilidad por divisa**, vuelve a ejecutar el consolidado actualizado:
+
+```text
+supabase/apply_all_ascii.sql
+```
+
+Es idempotente: no borra datos ni operaciones.
+
 Si tu editor o terminal muestra caracteres raros, usa `apply_all_ascii.sql`. Para copiarlo directo al portapapeles desde PowerShell:
 
 ```powershell
@@ -132,9 +140,9 @@ tests/               Pruebas del dominio
 3. **Operaciones:** revisar compras/ventas y anular boletas nulas (ST).
 4. **Mayoristas:** pactar una divisa a precio fijo y registrar entregas/pagos parciales; pueden quedar saldos por ambas partes.
 5. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa. Los bancos se crean como contraparte `BANCO`.
-6. **Gastos:** registrar egresos y consultar el cuadro por categoría y período.
+6. **Gastos:** registrar egresos, crear categorías a gusto y consultar el cuadro por categoría y período.
 7. **Cuadratura:** solo se muestran divisas con stock; cada una con bandera y nombre. Los billetes se cuentan aparte de las monedas CLP. Se puede agregar cualquier divisa del mundo y usar una denominación manual.
-8. **Cierre:** generar el reporte jerárquico, el cuadro de gastos y la valorización FIFO del inventario.
+8. **Cierre:** solo muestra divisas con stock o conteo; incluye rentabilidad por divisa antes de gastos, margen final y un **PDF firmable** para imprimir.
 9. **Histórico:** consultar promedios por semana, mes, año o rango personalizado.
 
 ## Apertura histórica

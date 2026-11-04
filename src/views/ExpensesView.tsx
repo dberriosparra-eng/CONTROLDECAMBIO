@@ -12,14 +12,17 @@ import {
 } from '../components/ui';
 import PeriodFilter, { periodRange } from '../components/PeriodFilter';
 import {
+  createExpenseCategory,
+  listExpenseCategories,
   listExpensesRange,
   registerExpense,
+  type ExpenseCategory,
   type ExpenseRow,
   type FxSession,
 } from '../lib/db';
 import { errorMessage, formatClp, formatDate } from '../lib/format';
 
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   'OPERACIONAL',
   'SUELDOS',
   'ARRIENDO',
@@ -42,6 +45,8 @@ export default function ExpensesView({
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [newCategory, setNewCategory] = useState('');
   const [concept, setConcept] = useState('');
   const [category, setCategory] = useState('OPERACIONAL');
   const [amount, setAmount] = useState('');
@@ -55,7 +60,27 @@ export default function ExpensesView({
     setLoading(true);
     setError(null);
     try {
-      setExpenses(await listExpensesRange(storeId, from, to));
+      const [expenseRows, categoryRows] = await Promise.all([
+        listExpensesRange(storeId, from, to),
+        listExpenseCategories(storeId),
+      ]);
+
+      let nextCategories = categoryRows;
+      if (nextCategories.length === 0) {
+        for (const name of DEFAULT_CATEGORIES) {
+          await createExpenseCategory(storeId, name);
+        }
+        nextCategories = await listExpenseCategories(storeId);
+      }
+
+      setExpenses(expenseRows);
+      setCategories(nextCategories);
+      if (
+        nextCategories.length > 0 &&
+        !nextCategories.some((item) => item.name === category)
+      ) {
+        setCategory(nextCategories[0].name);
+      }
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -80,6 +105,23 @@ export default function ExpensesView({
     }
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [expenses]);
+
+  async function handleAddCategory() {
+    if (!newCategory.trim()) return;
+    setWorking(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await createExpenseCategory(storeId, newCategory.trim());
+      setNewCategory('');
+      setCategories(await listExpenseCategories(storeId));
+      setSuccess('Categoría agregada.');
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setWorking(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!concept.trim()) {
@@ -175,9 +217,9 @@ export default function ExpensesView({
             />
             <div className="grid gap-2 sm:grid-cols-2">
               <Select value={category} onChange={(event) => setCategory(event.target.value)}>
-                {CATEGORIES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
+                {categories.map((item) => (
+                  <option key={item.id} value={item.name}>
+                    {item.name}
                   </option>
                 ))}
               </Select>
@@ -195,6 +237,27 @@ export default function ExpensesView({
               onChange={(event) => setNote(event.target.value)}
               placeholder="Nota / número de documento (opcional)"
             />
+
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Nueva categoría
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={newCategory}
+                  onChange={(event) => setNewCategory(event.target.value)}
+                  placeholder="Ej: Aseo, comisiones, cafetería"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleAddCategory()}
+                  disabled={working || !newCategory.trim()}
+                >
+                  Agregar
+                </Button>
+              </div>
+            </div>
+
             <Button
               onClick={() => void handleSubmit()}
               disabled={working}

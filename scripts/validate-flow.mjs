@@ -368,6 +368,18 @@ async function main() {
   ).rows[0].realized_margin_clp;
   closeTo(totalMargin, 9600, 'margen total = 9.600');
 
+  const usdMargin = (
+    await db.query(
+      `SELECT sales_clp, cost_clp, margin_clp
+       FROM fx_session_currency_margin
+       WHERE session_id = $1 AND currency_code = 'USD'`,
+      [session],
+    )
+  ).rows[0];
+  closeTo(usdMargin.sales_clp, 137600, 'ventas USD para margen = 137.600');
+  closeTo(usdMargin.cost_clp, 128000, 'costo USD para margen = 128.000');
+  closeTo(usdMargin.margin_clp, 9600, 'margen USD = 9.600');
+
   // Gasto: descuenta caja CLP y resultado.
   await db.query(
     `SELECT fx_register_expense($1, $2, '2026-09-01', 'Arriendo', 'ARRIENDO', 20000, 'prueba')`,

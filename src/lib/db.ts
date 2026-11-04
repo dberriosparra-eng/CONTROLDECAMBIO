@@ -155,6 +155,20 @@ export type WholesaleSettlementRow = {
   created_at: string;
 };
 
+export type ExpenseCategory = {
+  id: string;
+  name: string;
+  is_active: boolean;
+};
+
+export type CurrencyMarginRow = {
+  currency_code: string;
+  sales_clp: number;
+  cost_clp: number;
+  margin_clp: number;
+  margin_pct: number;
+};
+
 export type ExpenseRow = {
   id: string;
   business_date: string;
@@ -636,6 +650,42 @@ export async function listWholesaleSettlements(
     .order('business_date', { ascending: true })
     .order('created_at', { ascending: true });
   return unwrap(data as WholesaleSettlementRow[] | null, error);
+}
+
+export async function listExpenseCategories(
+  storeId: string,
+): Promise<ExpenseCategory[]> {
+  const { data, error } = await supabase
+    .from('fx_expense_categories')
+    .select('id, name, is_active')
+    .eq('store_id', storeId)
+    .eq('is_active', true)
+    .order('name');
+  return unwrap(data as ExpenseCategory[] | null, error);
+}
+
+export async function createExpenseCategory(
+  storeId: string,
+  name: string,
+): Promise<ExpenseCategory> {
+  const { data, error } = await supabase
+    .from('fx_expense_categories')
+    .insert({ store_id: storeId, name: name.trim() })
+    .select('id, name, is_active')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as ExpenseCategory;
+}
+
+export async function listCurrencyMargins(
+  sessionId: string,
+): Promise<CurrencyMarginRow[]> {
+  const { data, error } = await supabase
+    .from('fx_session_currency_margin')
+    .select('currency_code, sales_clp, cost_clp, margin_clp, margin_pct')
+    .eq('session_id', sessionId)
+    .order('currency_code');
+  return unwrap(data as CurrencyMarginRow[] | null, error);
 }
 
 export async function listExpenses(sessionId: string): Promise<ExpenseRow[]> {

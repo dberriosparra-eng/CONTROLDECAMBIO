@@ -205,7 +205,14 @@ export default function App() {
       case 'cashcount':
         return <CashCountView storeId={storeId} session={fxSession} onSaved={refresh} />;
       case 'close':
-        return <CloseView storeId={storeId} session={fxSession} onClosed={refresh} />;
+        return (
+          <CloseView
+            storeId={storeId}
+            storeName={storeName}
+            session={fxSession}
+            onClosed={refresh}
+          />
+        );
       case 'history':
         return <HistoryView storeId={storeId} />;
       case 'settings':

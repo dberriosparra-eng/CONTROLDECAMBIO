@@ -1295,6 +1295,11 @@ BEGIN
       FROM public.fx_wholesale_deals_status w
       WHERE w.store_id = p_store_id AND w.status <> 'ANULADO'
     ), '[]'::jsonb),
+    'currency_margin', COALESCE((
+      SELECT jsonb_agg(to_jsonb(m))
+      FROM public.fx_session_currency_margin m
+      WHERE m.session_id = p_session_id
+    ), '[]'::jsonb),
     'counts', COALESCE((
       SELECT jsonb_agg(to_jsonb(c))
       FROM public.fx_cash_counts c
