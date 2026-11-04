@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Session as AuthSession } from '@supabase/supabase-js';
 import Layout, { type TabKey } from './components/Layout';
 import Login from './components/Login';
-import { ErrorBanner, Spinner } from './components/ui';
+import { Card, ErrorBanner, Spinner } from './components/ui';
 import { supabase } from './lib/supabase';
 import {
   ensureSession,
@@ -22,6 +22,12 @@ import CashCountView from './views/CashCountView';
 import CloseView from './views/CloseView';
 import HistoryView from './views/HistoryView';
 import SettingsView from './views/SettingsView';
+
+function isMissingSchemaError(message: string): boolean {
+  return /does not exist|Could not find the function|schema cache|PGRST202|42P01/i.test(
+    message,
+  );
+}
 
 export default function App() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -128,15 +134,43 @@ export default function App() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-slate-950 px-4">
         {bootError ? (
-          <div className="w-full max-w-lg space-y-3">
-            <ErrorBanner message={bootError} />
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
-            >
-              Reintentar
-            </button>
+          <div className="w-full max-w-xl space-y-3">
+            {isMissingSchemaError(bootError) ? (
+              <Card>
+                <h2 className="text-lg font-semibold text-white">
+                  Falta aplicar el esquema en Supabase
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                  El usuario existe y el login funciona, pero la base todavía no tiene
+                  las tablas del sistema. Ejecuta el archivo{' '}
+                  <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-indigo-200">
+                    supabase/apply_all.sql
+                  </code>{' '}
+                  completo en el SQL Editor de Supabase y vuelve a cargar esta página.
+                </p>
+                <p className="mt-2 text-xs text-slate-500">
+                  Detalle técnico: {bootError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="mt-4 rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Ya apliqué el SQL, reintentar
+                </button>
+              </Card>
+            ) : (
+              <>
+                <ErrorBanner message={bootError} />
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Reintentar
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <Spinner label="Preparando la jornada…" />
