@@ -15,6 +15,7 @@ import {
   type ClosureRow,
   type DailyStatRow,
 } from '../lib/db';
+import { currencyFlag, currencyName } from '../lib/currencies';
 import { errorMessage, formatClp, formatDate, formatQty, formatRate } from '../lib/format';
 
 export default function HistoryView({ storeId }: { storeId: string }) {
@@ -138,7 +139,7 @@ export default function HistoryView({ storeId }: { storeId: string }) {
               >
                 {currencies.map((code) => (
                   <option key={code} value={code}>
-                    {code}
+                    {currencyFlag(code)} {code} · {currencyName(code)}
                   </option>
                 ))}
               </Select>

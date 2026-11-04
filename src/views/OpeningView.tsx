@@ -19,6 +19,7 @@ import {
   type FxSession,
   type SessionSummaryRow,
 } from '../lib/db';
+import { currencyFlag } from '../lib/currencies';
 import { errorMessage, formatClp, formatQty, formatRate } from '../lib/format';
 
 type DraftRow = {
@@ -234,6 +235,7 @@ export default function OpeningView({
                   <tr key={currency.code} className="border-b border-white/[0.04]">
                     <td className="py-2.5 pr-3">
                       <div className="flex items-center gap-2">
+                        <span className="text-base leading-none">{currencyFlag(currency.code)}</span>
                         <span className="font-semibold text-slate-100">{currency.code}</span>
                         <span className="text-xs text-slate-500">{currency.name}</span>
                       </div>

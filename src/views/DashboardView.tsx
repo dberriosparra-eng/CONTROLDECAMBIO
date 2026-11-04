@@ -21,6 +21,7 @@ import {
   type OperationRow,
   type SessionSummaryRow,
 } from '../lib/db';
+import { currencyFlag, currencyName } from '../lib/currencies';
 import { errorMessage, formatClp, formatQty, formatRate } from '../lib/format';
 
 export default function DashboardView({
@@ -73,8 +74,15 @@ export default function DashboardView({
 
   const cashClp = summary.find((row) => row.currency_code === 'CLP')?.expected_qty ?? 0;
   const inventoryClp = summary
-    .filter((row) => row.currency_code !== 'CLP')
+    .filter((row) => row.currency_code !== 'CLP' && row.expected_qty > 0)
     .reduce((total, row) => total + row.current_fifo_value_clp, 0);
+  const visibleSummary = summary.filter(
+    (row) =>
+      row.opening_qty !== 0 ||
+      row.buy_qty !== 0 ||
+      row.sell_qty !== 0 ||
+      row.expected_qty !== 0,
+  );
   const capitalClp = cashClp + inventoryClp;
   const totalBuyClp = summary.reduce((total, row) => total + row.buy_clp, 0);
   const totalSellClp = summary.reduce((total, row) => total + row.sell_clp, 0);
@@ -148,10 +156,28 @@ export default function DashboardView({
               </tr>
             </thead>
             <tbody>
-              {summary.map((row) => (
+              {visibleSummary.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-sm text-slate-500">
+                    No hay divisas con stock en esta sesión. Registra una apertura o
+                    agrega una divisa desde Cuadratura.
+                  </td>
+                </tr>
+              )}
+              {visibleSummary.map((row) => (
                 <tr key={row.currency_code} className="border-b border-white/[0.04]">
                   <td className="py-2.5 pr-3">
-                    <span className="font-semibold text-slate-100">{row.currency_code}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base leading-none">
+                        {currencyFlag(row.currency_code)}
+                      </span>
+                      <span className="font-semibold text-slate-100">
+                        {row.currency_code}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {currencyName(row.currency_code)}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-right text-slate-300">
                     {formatQty(row.opening_qty)}

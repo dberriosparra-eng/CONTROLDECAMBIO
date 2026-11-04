@@ -909,7 +909,11 @@ SELECT
   COALESCE(p.sell_clp, 0) AS sell_clp,
   COALESCE(m.quantity_delta, 0) AS net_movement_qty,
   COALESCE(o.quantity, 0) + COALESCE(m.quantity_delta, 0) AS expected_qty,
-  COALESCE(v.value_clp, 0) AS current_fifo_value_clp
+  CASE
+    WHEN COALESCE(o.quantity, 0) + COALESCE(m.quantity_delta, 0) > 0
+    THEN COALESCE(v.value_clp, 0)
+    ELSE 0
+  END AS current_fifo_value_clp
 FROM public.fx_sessions s
 CROSS JOIN public.fx_currencies c
 LEFT JOIN public.fx_opening_balances o

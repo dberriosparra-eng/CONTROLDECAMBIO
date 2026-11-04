@@ -80,6 +80,11 @@ try {
   ]);
   await validate('consolidado', ['supabase/apply_all.sql']);
   await validate('ascii', ['supabase/apply_all_ascii.sql']);
+  await validate('patch', [
+    'supabase/migrations/202611040002_fx_casa_cambio.sql',
+    'supabase/migrations/202611040003_fx_rpc.sql',
+    'supabase/patch_world_currencies.sql',
+  ]);
 } catch (error) {
   console.error('FALLO:', error.message);
   process.exitCode = 1;

@@ -64,6 +64,12 @@ supabase/apply_all.sql        # UTF-8, conserva acentos
 supabase/apply_all_ascii.sql  # 100% ASCII, recomendado si hay problemas de codificación
 ```
 
+Si el esquema ya está aplicado y solo quieres agregar la función para sumar monedas del mundo, ejecuta:
+
+```text
+supabase/patch_world_currencies.sql
+```
+
 Si tu editor o terminal muestra caracteres raros, usa `apply_all_ascii.sql`. Para copiarlo directo al portapapeles desde PowerShell:
 
 ```powershell
@@ -127,9 +133,19 @@ tests/               Pruebas del dominio
 4. **Mayoristas:** pactar una divisa a precio fijo y registrar entregas/pagos parciales; pueden quedar saldos por ambas partes.
 5. **Cuentas corrientes:** registrar préstamos, entregas, retiros, cobros y pagos por divisa. Los bancos se crean como contraparte `BANCO`.
 6. **Gastos:** registrar egresos y consultar el cuadro por categoría y período.
-7. **Cuadratura:** contar billetes/monedas por denominación y comparar contra el saldo esperado.
+7. **Cuadratura:** solo se muestran divisas con stock; cada una con bandera y nombre. Los billetes se cuentan aparte de las monedas CLP. Se puede agregar cualquier divisa del mundo y usar una denominación manual.
 8. **Cierre:** generar el reporte jerárquico, el cuadro de gastos y la valorización FIFO del inventario.
 9. **Histórico:** consultar promedios por semana, mes, año o rango personalizado.
+
+## Apertura histórica
+
+La sesión **2026-09-01** quedó creada con la apertura inicial de la planilla:
+
+```text
+USD 50.000 @ 925 = 46.250.000 CLP
+```
+
+Puedes verla cambiando la fecha en el panel. El reporte completo se importará desde esa fecha cuando esté disponible.
 
 ## Documentación funcional
 

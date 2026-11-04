@@ -915,7 +915,11 @@ SELECT
   COALESCE(p.sell_clp, 0) AS sell_clp,
   COALESCE(m.quantity_delta, 0) AS net_movement_qty,
   COALESCE(o.quantity, 0) + COALESCE(m.quantity_delta, 0) AS expected_qty,
-  COALESCE(v.value_clp, 0) AS current_fifo_value_clp
+  CASE
+    WHEN COALESCE(o.quantity, 0) + COALESCE(m.quantity_delta, 0) > 0
+    THEN COALESCE(v.value_clp, 0)
+    ELSE 0
+  END AS current_fifo_value_clp
 FROM public.fx_sessions s
 CROSS JOIN public.fx_currencies c
 LEFT JOIN public.fx_opening_balances o
@@ -1219,6 +1223,51 @@ $$;
 
 REVOKE ALL ON FUNCTION public.fx_ensure_store(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.fx_ensure_store(text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.fx_ensure_currency(
+  p_code text,
+  p_name text,
+  p_symbol text DEFAULT '',
+  p_decimals integer DEFAULT 2
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_code text := upper(btrim(COALESCE(p_code, '')));
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Sesion requerida';
+  END IF;
+  IF v_code !~ '^[A-Z]{3}$' THEN
+    RAISE EXCEPTION 'Codigo ISO invalido: %', v_code;
+  END IF;
+
+  INSERT INTO public.fx_currencies (
+    code, name, symbol, decimals, is_base, is_active, sort_order
+  ) VALUES (
+    v_code,
+    COALESCE(NULLIF(btrim(p_name), ''), v_code),
+    COALESCE(p_symbol, ''),
+    GREATEST(0, LEAST(6, COALESCE(p_decimals, 2))),
+    false,
+    true,
+    1000
+  )
+  ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    symbol = EXCLUDED.symbol,
+    decimals = EXCLUDED.decimals,
+    is_active = true;
+
+  RETURN v_code;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.fx_ensure_currency(text, text, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fx_ensure_currency(text, text, text, integer) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.fx_ensure_session(
   p_store_id uuid,

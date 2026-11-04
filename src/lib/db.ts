@@ -209,6 +209,22 @@ export async function getStoreName(storeId: string): Promise<string> {
   return (data as { name?: string } | null)?.name ?? 'Caja Temuco';
 }
 
+export async function ensureCurrency(input: {
+  code: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('fx_ensure_currency', {
+    p_code: input.code,
+    p_name: input.name,
+    p_symbol: input.symbol,
+    p_decimals: input.decimals,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
 export async function listCurrencies(): Promise<Currency[]> {
   const { data, error } = await supabase
     .from('fx_currencies')
