@@ -57,6 +57,12 @@ supabase/migrations/202611040003_fx_rpc.sql
 
 Aplícalas **en ese orden**. La primera crea tablas, vistas y RLS; la segunda crea las funciones transaccionales.
 
+Para pegar en el SQL Editor de Supabase hay un archivo consolidado:
+
+```text
+supabase/apply_all.sql
+```
+
 Incluye:
 
 - Monedas, alias y denominaciones.
