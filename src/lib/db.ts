@@ -673,7 +673,18 @@ export async function createExpenseCategory(
     .insert({ store_id: storeId, name: name.trim() })
     .select('id, name, is_active')
     .single();
-  if (error) throw new Error(error.message);
+
+  if (error) {
+    if (error.code === '23505') {
+      const existing = await listExpenseCategories(storeId);
+      const found = existing.find(
+        (item) => item.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      );
+      if (found) return found;
+    }
+    throw new Error(error.message);
+  }
+
   return data as ExpenseCategory;
 }
 

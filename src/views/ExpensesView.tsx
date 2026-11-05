@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Receipt } from 'lucide-react';
 import {
   Button,
@@ -51,6 +51,7 @@ export default function ExpensesView({
   const [category, setCategory] = useState('OPERACIONAL');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
+  const seedingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,9 +67,14 @@ export default function ExpensesView({
       ]);
 
       let nextCategories = categoryRows;
-      if (nextCategories.length === 0) {
+      if (nextCategories.length === 0 && !seedingRef.current) {
+        seedingRef.current = true;
         for (const name of DEFAULT_CATEGORIES) {
-          await createExpenseCategory(storeId, name);
+          try {
+            await createExpenseCategory(storeId, name);
+          } catch {
+            // Otra carga simultánea pudo crear la categoría; se recarga abajo.
+          }
         }
         nextCategories = await listExpenseCategories(storeId);
       }

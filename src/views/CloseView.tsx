@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, FileDown, Printer } from 'lucide-react';
 import {
   Badge,
@@ -57,8 +57,10 @@ export default function CloseView({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const loadIdRef = useRef(0);
 
   async function load() {
+    const loadId = ++loadIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -81,6 +83,7 @@ export default function CloseView({
         listClosures(storeId),
         getSessionMargin(session.id),
       ]);
+      if (loadId !== loadIdRef.current) return;
       setSummary(summaryRows);
       setAccounts(accountRows);
       setCounts(countRows);
@@ -90,9 +93,10 @@ export default function CloseView({
       setClosures(closureRows);
       setMargin(marginValue);
     } catch (caught) {
+      if (loadId !== loadIdRef.current) return;
       setError(errorMessage(caught));
     } finally {
-      setLoading(false);
+      if (loadId === loadIdRef.current) setLoading(false);
     }
   }
 
