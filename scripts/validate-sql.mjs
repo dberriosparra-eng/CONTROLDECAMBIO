@@ -85,6 +85,11 @@ try {
     'supabase/migrations/202611040003_fx_rpc.sql',
     'supabase/patch_world_currencies.sql',
   ]);
+  await validate('close-patch', [
+    'supabase/migrations/202611040002_fx_casa_cambio.sql',
+    'supabase/migrations/202611040003_fx_rpc.sql',
+    'supabase/patch_close_expenses.sql',
+  ]);
 } catch (error) {
   console.error('FALLO:', error.message);
   process.exitCode = 1;

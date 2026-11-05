@@ -70,13 +70,19 @@ Si el esquema ya está aplicado y solo quieres agregar la función para sumar mo
 supabase/patch_world_currencies.sql
 ```
 
-Para la versión con **categorías de gastos personalizables** y **rentabilidad por divisa**, vuelve a ejecutar el consolidado actualizado:
+Para la versión con **categorías de gastos personalizables** y **rentabilidad por divisa**, puedes ejecutar el parche corto:
+
+```text
+supabase/patch_close_expenses.sql
+```
+
+O volver a ejecutar el consolidado actualizado:
 
 ```text
 supabase/apply_all_ascii.sql
 ```
 
-Es idempotente: no borra datos ni operaciones.
+Ambos son idempotentes: no borran datos ni operaciones.
 
 Si tu editor o terminal muestra caracteres raros, usa `apply_all_ascii.sql`. Para copiarlo directo al portapapeles desde PowerShell:
 
